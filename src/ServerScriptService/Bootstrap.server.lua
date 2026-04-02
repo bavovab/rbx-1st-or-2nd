@@ -1,7 +1,7 @@
-local Players        = game:GetService("Players")
+local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- ── Создаём все RemoteEvents ДО старта round loop ──────────────────────────
+-- Создаём все RemoteEvents ДО старта round loop
 local RemotesFolder = ReplicatedStorage:WaitForChild("Remotes")
 
 local REMOTE_NAMES = {
@@ -21,6 +21,7 @@ local REMOTE_NAMES = {
 	"HPUpdate",
 	"SubmitChoice",
 	"CombatInput",
+	"LeaderboardUpdate",
 }
 
 for _, name in ipairs(REMOTE_NAMES) do
@@ -31,9 +32,10 @@ for _, name in ipairs(REMOTE_NAMES) do
 	end
 end
 
--- ── Теперь запускаем сервисы ────────────────────────────────────────────────
-local PlayerStateSvc = require(script.Parent.Services.PlayerStateService)
-local RoundService   = require(script.Parent.Services.RoundService)
+-- Запускаем сервисы
+local PlayerStateSvc     = require(script.Parent.Services.PlayerStateService)
+local RoundService       = require(script.Parent.Services.RoundService)
+local LeaderboardService = require(script.Parent.Services.LeaderboardService)
 
 Players.PlayerAdded:Connect(function(player)
 	PlayerStateSvc.OnPlayerAdded(player)
@@ -49,5 +51,6 @@ for _, player in ipairs(Players:GetPlayers()) do
 end
 
 RoundService.Init()
+LeaderboardService.Init()
 
 print("[Bootstrap] PartyPvP server started.")

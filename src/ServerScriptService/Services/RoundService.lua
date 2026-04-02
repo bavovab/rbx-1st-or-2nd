@@ -280,6 +280,9 @@ local function RunRound()
 	ChoiceService.ClearCurrentPair()
 	PlayerStateSvc.ResetRoundState()
 	TeamService.Reset()
+	-- Обновляем лидерборд после раунда
+	local LeaderboardSvc = require(script.Parent.LeaderboardService)
+	LeaderboardSvc.BroadcastUpdate()
 	task.wait(RoundConfig.PHASE_DURATIONS.Cleanup)
 end
 
