@@ -1,6 +1,3 @@
--- CombatService.lua
--- Authoritative server-side combat: HP, damage, elimination, win checking.
-
 local Players        = game:GetService("Players")
 local Enums          = require(game.ReplicatedStorage.Shared.Enums)
 local CombatConfig   = require(game.ReplicatedStorage.Config.CombatConfig)
@@ -8,19 +5,16 @@ local Utility        = require(game.ReplicatedStorage.Shared.Utility)
 local PlayerStateSvc = require(script.Parent.PlayerStateService)
 local TeamService    = require(script.Parent.TeamService)
 
-local Remotes = game.ReplicatedStorage.Remotes
+local RemotesFolder      = game.ReplicatedStorage:WaitForChild("Remotes")
+local RemotePlayerElim   = RemotesFolder:WaitForChild("PlayerEliminated")
+local RemoteHPUpdate     = RemotesFolder:WaitForChild("HPUpdate")
 
 local CombatService = {}
 
--- Per-player HP table, separate from Humanoid.Health (authoritative)
-local _hp = {}
-
--- Per-player block state: { active: bool, startTime: number }
+local _hp         = {}
 local _blockState = {}
-
--- Callbacks set by RoundService
-local _onEliminated = nil  -- function(eliminatedPlayer, killerPlayer|nil)
-local _onWinner     = nil  -- function(winnerTeam, reason)
+local _onEliminated = nil
+local _onWinner     = nil
 
 function CombatService.SetEliminatedCallback(fn)
 	_onEliminated = fn
@@ -30,22 +24,17 @@ function CombatService.SetWinnerCallback(fn)
 	_onWinner = fn
 end
 
--- Initialize all in-round players with full HP
 function CombatService.InitializePlayers(players)
-	_hp = {}
+	_hp         = {}
 	_blockState = {}
 	for _, player in ipairs(players) do
-		_hp[player] = CombatConfig.MAX_HP
+		_hp[player]         = CombatConfig.MAX_HP
 		_blockState[player] = { active = false, startTime = 0 }
-		-- Sync to Humanoid for visual health bar
 		local hum = Utility.GetHumanoid(player)
 		if hum then
-			hum.MaxHealth = CombatConfig.MAX_HP
-			hum.Health    = CombatConfig.MAX_HP
-			hum.AutoRotate = true
-		end
-		-- Disable default death on Humanoid so server controls it
-		if hum then
+			hum.MaxHealth          = CombatConfig.MAX_HP
+			hum.Health             = CombatConfig.MAX_HP
+			hum.AutoRotate         = true
 			hum.BreakJointsOnDeath = false
 		end
 	end
@@ -72,14 +61,11 @@ local function EliminatePlayer(player, killer)
 	if not PlayerStateSvc.Get(player).IsAlive then return end
 	PlayerStateSvc.SetAlive(player, false)
 	_hp[player] = 0
-	-- Sync Humanoid to 0 for ragdoll/death animation
 	local hum = Utility.GetHumanoid(player)
 	if hum then
 		hum.Health = 0
 	end
-	-- Fire elimination event to all clients
-	Remotes.PlayerEliminated:FireAllClients(player.Name)
-	-- Track kill for killer
+	RemotePlayerElim:FireAllClients(player.Name)
 	if killer and PlayerStateSvc.Get(killer) then
 		PlayerStateSvc.AddKill(killer)
 	end
@@ -91,10 +77,8 @@ end
 local function ApplyDamage(attacker, target, rawDamage)
 	if not _hp[target] then return end
 	local damage = rawDamage
-	-- Check block
 	local bs = _blockState[target]
 	if bs and bs.active then
-		-- Check if block has expired by duration
 		if (os.clock() - bs.startTime) > CombatConfig.BLOCK_DURATION then
 			bs.active = false
 		else
@@ -104,26 +88,23 @@ local function ApplyDamage(attacker, target, rawDamage)
 	damage = math.floor(damage)
 	_hp[target] = math.max(0, _hp[target] - damage)
 	PlayerStateSvc.AddDamage(attacker, damage)
-	-- Sync Humanoid for visual bar
 	local hum = Utility.GetHumanoid(target)
 	if hum and hum.Health > 0 then
 		hum.Health = _hp[target]
 	end
-	-- Notify the target of their HP
-	Remotes.HPUpdate:FireClient(target, _hp[target], CombatConfig.MAX_HP)
+	RemoteHPUpdate:FireClient(target, _hp[target], CombatConfig.MAX_HP)
 	if _hp[target] <= 0 then
 		EliminatePlayer(target, attacker)
 	end
 end
 
--- Returns the best alive enemy target within range, or nil
 local function FindEnemyTarget(attacker, enemySide)
 	local root = Utility.GetHumanoidRootPart(attacker)
 	if not root then return nil end
 	local attackerPos = root.Position
-	local bestDist = math.huge
-	local bestTarget = nil
-	local enemies = TeamService.GetTeam(enemySide)
+	local bestDist    = math.huge
+	local bestTarget  = nil
+	local enemies     = TeamService.GetTeam(enemySide)
 	for _, enemy in ipairs(enemies) do
 		local state = PlayerStateSvc.Get(enemy)
 		if state and state.IsAlive then
@@ -140,12 +121,11 @@ local function FindEnemyTarget(attacker, enemySide)
 	return bestTarget
 end
 
--- Validate that a specific targetId is a valid in-range enemy
 local function FindEnemyById(attacker, enemySide, targetUserId)
 	local root = Utility.GetHumanoidRootPart(attacker)
 	if not root then return nil end
 	local attackerPos = root.Position
-	local enemies = TeamService.GetTeam(enemySide)
+	local enemies     = TeamService.GetTeam(enemySide)
 	for _, enemy in ipairs(enemies) do
 		if enemy.UserId == targetUserId then
 			local state = PlayerStateSvc.Get(enemy)
@@ -164,7 +144,6 @@ local function FindEnemyById(attacker, enemySide, targetUserId)
 	return nil
 end
 
--- Process a validated combat input from a player
 function CombatService.ProcessInput(attacker, action, targetUserId)
 	local state = PlayerStateSvc.Get(attacker)
 	if not state or not state.IsAlive then return end
@@ -187,10 +166,8 @@ function CombatService.ProcessInput(attacker, action, targetUserId)
 	elseif action == Enums.CombatAction.Dash then
 		local root = Utility.GetHumanoidRootPart(attacker)
 		if root then
-			local hum = Utility.GetHumanoid(attacker)
 			local lookDir = root.CFrame.LookVector
-			local newCF   = root.CFrame + lookDir * CombatConfig.DASH_DISTANCE
-			root.CFrame   = newCF
+			root.CFrame   = root.CFrame + lookDir * CombatConfig.DASH_DISTANCE
 		end
 
 	elseif action == Enums.CombatAction.Block then
@@ -201,7 +178,6 @@ function CombatService.ProcessInput(attacker, action, targetUserId)
 		end
 	end
 
-	-- After any action, check win condition
 	CombatService.CheckWinCondition()
 end
 
@@ -222,7 +198,6 @@ function CombatService.CheckWinCondition()
 	return false
 end
 
--- Resolve winner when battle timer ends
 function CombatService.ResolveByTimer()
 	local leftAlive  = TeamService.GetAliveCount(Enums.Team.Left)
 	local rightAlive = TeamService.GetAliveCount(Enums.Team.Right)
@@ -231,7 +206,6 @@ function CombatService.ResolveByTimer()
 	elseif rightAlive > leftAlive then
 		return Enums.Team.Right, Enums.WinnerReason.AliveCount
 	end
-	-- Tiebreak by total HP
 	local leftHP  = CombatService.GetTotalHP(Enums.Team.Left)
 	local rightHP = CombatService.GetTotalHP(Enums.Team.Right)
 	if leftHP > rightHP then
@@ -243,7 +217,7 @@ function CombatService.ResolveByTimer()
 end
 
 function CombatService.Cleanup()
-	_hp = {}
+	_hp         = {}
 	_blockState = {}
 end
 
