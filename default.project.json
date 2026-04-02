@@ -1,0 +1,55 @@
+{
+  "name": "rbx-1st-or-2nd",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "$ignoreUnknownInstances": true,
+      "Config": {
+        "$path": "src/ReplicatedStorage/Config"
+      },
+      "Shared": {
+        "$path": "src/ReplicatedStorage/Shared"
+      },
+      "Remotes": {
+        "$path": "src/ReplicatedStorage/Remotes"
+      }
+    },
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "$ignoreUnknownInstances": true,
+      "Services": {
+        "$path": "src/ServerScriptService/Services"
+      },
+      "Bootstrap": {
+        "$path": "src/ServerScriptService/Bootstrap.server.lua"
+      }
+    },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "$ignoreUnknownInstances": true,
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "$ignoreUnknownInstances": true,
+        "Controllers": {
+          "$path": "src/StarterPlayer/StarterPlayerScripts/Controllers"
+        },
+        "ClientBootstrap": {
+          "$path": "src/StarterPlayer/StarterPlayerScripts/ClientBootstrap.client.lua"
+        }
+      }
+    },
+    "StarterGui": {
+      "$className": "StarterGui",
+      "$ignoreUnknownInstances": true
+    },
+    "ServerStorage": {
+      "$className": "ServerStorage",
+      "$ignoreUnknownInstances": true
+    },
+    "Workspace": {
+      "$className": "Workspace",
+      "$ignoreUnknownInstances": true
+    }
+  }
+}
