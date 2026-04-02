@@ -1,5 +1,5 @@
 {
-  "name": "rbx-1st-or-2nd",
+  "name": "PartyPvP",
   "tree": {
     "$className": "DataModel",
     "ReplicatedStorage": {
@@ -12,7 +12,7 @@
         "$path": "src/ReplicatedStorage/Shared"
       },
       "Remotes": {
-        "$path": "src/ReplicatedStorage/Remotes"
+        "$className": "Folder"
       }
     },
     "ServerScriptService": {

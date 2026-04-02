@@ -109,13 +109,13 @@ local function OnPlayerRemoving(player)
 end
 
 local function RunRound()
-	State.RoundNumber = State.RoundNumber + 1
-	State.WinnerTeam  = nil
+	State.RoundNumber  = State.RoundNumber + 1
+	State.WinnerTeam   = nil
 	State.WinnerReason = nil
-	State.IsDraw      = false
-	_battleEnded      = false
-	_battleWinner     = nil
-	_battleReason     = nil
+	State.IsDraw       = false
+	_battleEnded       = false
+	_battleWinner      = nil
+	_battleReason      = nil
 
 	-- INTERMISSION
 	SetPhase(Enums.Phase.Intermission)
@@ -250,4 +250,78 @@ local function RunRound()
 	else
 		local winTeam, reason = CombatService.ResolveByTimer()
 		State.WinnerTeam   = winTeam
-		State.WinnerReason = 
+		State.WinnerReason = reason
+		State.IsDraw       = (winTeam == nil)
+	end
+
+	-- VICTORY
+	SetPhase(Enums.Phase.Victory)
+	Remotes.VictoryAnnounced:FireAllClients(
+		State.WinnerTeam or "Draw",
+		State.WinnerReason or Enums.WinnerReason.Draw,
+		State.IsDraw
+	)
+	RewardService.GrantRoundRewards(State.WinnerTeam, State.IsDraw)
+	task.wait(RoundConfig.PHASE_DURATIONS.Victory)
+
+	-- CELEBRATION
+	SetPhase(Enums.Phase.Celebration)
+	CelebrationSvc.PlayForWinners(State.WinnerTeam, State.IsDraw)
+	CountdownPhase(RoundConfig.PHASE_DURATIONS.Celebration)
+
+	-- RETURN TO LOBBY
+	SetPhase(Enums.Phase.ReturnToLobby)
+	TeleportSvc.ReturnAllToLobby(Players:GetPlayers())
+	task.wait(RoundConfig.PHASE_DURATIONS.ReturnToLobby)
+
+	-- CLEANUP
+	SetPhase(Enums.Phase.Cleanup)
+	CombatService.Cleanup()
+	ChoiceService.ClearCurrentPair()
+	PlayerStateSvc.ResetRoundState()
+	TeamService.Reset()
+	task.wait(RoundConfig.PHASE_DURATIONS.Cleanup)
+end
+
+function RoundService.GetZoneSide(player)
+	local root = Utility.GetHumanoidRootPart(player)
+	if not root then return nil end
+	local pos = root.Position
+
+	local leftZone  = Utility.FindPath(workspace, {"Arena", "ChoiceLeftZone"})
+	local rightZone = Utility.FindPath(workspace, {"Arena", "ChoiceRightZone"})
+
+	local function InZone(part, point)
+		if not part or not part:IsA("BasePart") then return false end
+		local localPos = part.CFrame:PointToObjectSpace(point)
+		local half = part.Size / 2
+		return math.abs(localPos.X) <= half.X
+			and math.abs(localPos.Y) <= half.Y
+			and math.abs(localPos.Z) <= half.Z
+	end
+
+	if InZone(leftZone, pos) then
+		return Enums.Team.Left
+	elseif InZone(rightZone, pos) then
+		return Enums.Team.Right
+	end
+	return nil
+end
+
+function RoundService.Init()
+	Remotes.SubmitChoice.OnServerEvent:Connect(OnSubmitChoice)
+	Remotes.CombatInput.OnServerEvent:Connect(OnCombatInput)
+	Players.PlayerRemoving:Connect(OnPlayerRemoving)
+
+	task.spawn(function()
+		while true do
+			local ok, err = pcall(RunRound)
+			if not ok then
+				warn("[RoundService] Round error:", err)
+				task.wait(5)
+			end
+		end
+	end)
+end
+
+return RoundService
