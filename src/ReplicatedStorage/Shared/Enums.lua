@@ -1,3 +1,4 @@
+-- ModuleScript (без изменений по логике, оставлен полным для удобства)
 local Enums = {}
 
 Enums.Phase = {
@@ -23,23 +24,14 @@ Enums.Team = {
 }
 
 Enums.CombatAction = {
-	Attack = "Attack",
-	Dash   = "Dash",
-	Block  = "Block",
-}
-
-Enums.WinnerReason = {
-	Wipeout    = "Wipeout",
-	AliveCount = "AliveCount",
-	TotalHP    = "TotalHP",
-	Draw       = "Draw",
-	TimerEnd   = "TimerEnd",
+	Melee = "Melee",
+	Dash  = "Dash",
+	Block = "Block",
 }
 
 Enums.UndecidedMode = {
-	Random    = "Random",
-	Smaller   = "Smaller",
-	Eliminate = "Eliminate",
+	RandomAssign = "RandomAssign",
+	SpectateOnly = "SpectateOnly",
 }
 
 return Enums

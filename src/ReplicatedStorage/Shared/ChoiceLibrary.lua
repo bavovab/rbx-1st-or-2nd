@@ -1,153 +1,97 @@
--- ChoiceLibrary.lua
--- Choice pair definitions and weighted random selection with history avoidance.
+-- ModuleScript
+-- Выбирает две случайные независимые опции из ContentConfig.OPTIONS.
+-- Гарантирует что обе опции разные и не повторяют недавние пары.
 
-local Utility = require(script.Parent.Utility)
+local ContentConfig = require(script.Parent.Parent.Config.ContentConfig)
 
 local ChoiceLibrary = {}
 
-local PAIRS = {
-	{
-		Id           = "NinjasVsPirates",
-		LeftText     = "Ninjas",
-		RightText    = "Pirates",
-		LeftColor    = Color3.fromRGB(30, 30, 30),
-		RightColor   = Color3.fromRGB(200, 40, 40),
-		Category     = "Adventure",
-		RevealSfxKey = "RevealGeneric",
-		Allowed      = true,
-		Weight       = 10,
-	},
-	{
-		Id           = "MagicVsMecha",
-		LeftText     = "Magic",
-		RightText    = "Mecha",
-		LeftColor    = Color3.fromRGB(140, 60, 220),
-		RightColor   = Color3.fromRGB(120, 120, 130),
-		Category     = "Fantasy",
-		RevealSfxKey = "RevealGeneric",
-		Allowed      = true,
-		Weight       = 10,
-	},
-	{
-		Id           = "IceVsFire",
-		LeftText     = "Ice",
-		RightText    = "Fire",
-		LeftColor    = Color3.fromRGB(80, 160, 240),
-		RightColor   = Color3.fromRGB(240, 100, 20),
-		Category     = "Elemental",
-		RevealSfxKey = "RevealGeneric",
-		Allowed      = true,
-		Weight       = 12,
-	},
-	{
-		Id           = "SpeedVsStrength",
-		LeftText     = "Speed",
-		RightText    = "Strength",
-		LeftColor    = Color3.fromRGB(240, 220, 20),
-		RightColor   = Color3.fromRGB(180, 90, 20),
-		Category     = "Power",
-		RevealSfxKey = "RevealGeneric",
-		Allowed      = true,
-		Weight       = 9,
-	},
-	{
-		Id           = "SamuraiVsHunters",
-		LeftText     = "Samurai",
-		RightText    = "Hunters",
-		LeftColor    = Color3.fromRGB(200, 30, 30),
-		RightColor   = Color3.fromRGB(80, 110, 50),
-		Category     = "Warriors",
-		RevealSfxKey = "RevealGeneric",
-		Allowed      = true,
-		Weight       = 10,
-	},
-	{
-		Id           = "LightVsShadow",
-		LeftText     = "Light",
-		RightText    = "Shadow",
-		LeftColor    = Color3.fromRGB(255, 250, 220),
-		RightColor   = Color3.fromRGB(20, 20, 30),
-		Category     = "Elemental",
-		RevealSfxKey = "RevealGeneric",
-		Allowed      = true,
-		Weight       = 11,
-	},
-	{
-		Id           = "StormVsEarth",
-		LeftText     = "Storm",
-		RightText    = "Earth",
-		LeftColor    = Color3.fromRGB(60, 180, 220),
-		RightColor   = Color3.fromRGB(120, 80, 40),
-		Category     = "Elemental",
-		RevealSfxKey = "RevealGeneric",
-		Allowed      = true,
-		Weight       = 8,
-	},
-	{
-		Id           = "WolvesVsEagles",
-		LeftText     = "Wolves",
-		RightText    = "Eagles",
-		LeftColor    = Color3.fromRGB(80, 100, 140),
-		RightColor   = Color3.fromRGB(200, 170, 30),
-		Category     = "Animals",
-		RevealSfxKey = "RevealGeneric",
-		Allowed      = true,
-		Weight       = 8,
-	},
-}
+-- История: хранит Id опций использованных недавно (обе стороны)
+local recentIds = {}
 
-local function GetEligiblePairs(recentHistory)
-	local eligible = {}
-	for _, entry in ipairs(PAIRS) do
-		if entry.Allowed and not Utility.TableContains(recentHistory, entry.Id) then
-			table.insert(eligible, entry)
+local function weightedPick(pool)
+	local total = 0
+	for _, item in ipairs(pool) do
+		total = total + (item.Weight or 1)
+	end
+	local roll = math.random() * total
+	local cumulative = 0
+	for _, item in ipairs(pool) do
+		cumulative = cumulative + (item.Weight or 1)
+		if roll <= cumulative then
+			return item
 		end
 	end
-	if #eligible == 0 then
-		for _, entry in ipairs(PAIRS) do
-			if entry.Allowed then
-				table.insert(eligible, entry)
-			end
-		end
-	end
-	return eligible
+	return pool[#pool]
 end
 
-function ChoiceLibrary.GetRandomPair(recentHistory)
-	local eligible = GetEligiblePairs(recentHistory or {})
-	local totalWeight = 0
-	local cumulative = {}
-	for _, entry in ipairs(eligible) do
-		totalWeight = totalWeight + entry.Weight
-		table.insert(cumulative, { weight = totalWeight, entry = entry })
+local function wasRecent(id)
+	for _, rid in ipairs(recentIds) do
+		if rid == id then return true end
 	end
-	if totalWeight == 0 then
-		return eligible[1]
-	end
-	local roll = math.random(1, totalWeight)
-	for _, c in ipairs(cumulative) do
-		if roll <= c.weight then
-			return c.entry
-		end
-	end
-	return eligible[#eligible]
+	return false
 end
 
-function ChoiceLibrary.GetPairById(id)
-	for _, entry in ipairs(PAIRS) do
-		if entry.Id == id then return entry end
-	end
-	return nil
-end
+-- Возвращает таблицу { Left = option, Right = option }
+-- Обе опции случайные и независимые друг от друга
+function ChoiceLibrary.GetRandomPair(maxHistory)
+	maxHistory = maxHistory or 4
 
-function ChoiceLibrary.GetAllAllowed()
-	local result = {}
-	for _, entry in ipairs(PAIRS) do
-		if entry.Allowed then
-			table.insert(result, entry)
+	local allOptions = ContentConfig.OPTIONS
+
+	-- Сначала фильтруем недавно использованные
+	local freshPool = {}
+	for _, opt in ipairs(allOptions) do
+		if not wasRecent(opt.Id) then
+			table.insert(freshPool, opt)
 		end
 	end
-	return result
+
+	-- Если свежих меньше 2 — сбрасываем историю и берём все
+	if #freshPool < 2 then
+		recentIds = {}
+		freshPool = {}
+		for _, opt in ipairs(allOptions) do
+			table.insert(freshPool, opt)
+		end
+	end
+
+	-- Выбираем Left
+	local leftOpt = weightedPick(freshPool)
+
+	-- Убираем leftOpt из пула для выбора Right
+	local rightPool = {}
+	for _, opt in ipairs(freshPool) do
+		if opt.Id ~= leftOpt.Id then
+			table.insert(rightPool, opt)
+		end
+	end
+
+	local rightOpt = weightedPick(rightPool)
+
+	-- Обновляем историю
+	table.insert(recentIds, leftOpt.Id)
+	table.insert(recentIds, rightOpt.Id)
+	while #recentIds > maxHistory * 2 do
+		table.remove(recentIds, 1)
+	end
+
+	return {
+		Left  = leftOpt,
+		Right = rightOpt,
+		-- удобные поля для обратной совместимости с RoundService
+		LeftText     = leftOpt.Text,
+		RightText    = rightOpt.Text,
+		LeftColor    = leftOpt.Color,
+		RightColor   = rightOpt.Color,
+		LeftImageId  = leftOpt.ImageId  or 0,
+		RightImageId = rightOpt.ImageId or 0,
+		RevealSfxKey = "RevealSting1",
+	}
+end
+
+function ChoiceLibrary.ResetHistory()
+	recentIds = {}
 end
 
 return ChoiceLibrary

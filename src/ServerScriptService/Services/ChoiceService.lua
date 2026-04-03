@@ -1,27 +1,17 @@
-local GameConfig    = require(game.ReplicatedStorage.Config.GameConfig)
-local ChoiceLibrary = require(game.ReplicatedStorage.Shared.ChoiceLibrary)
+-- ModuleScript
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ChoiceLibrary = require(ReplicatedStorage.Shared.ChoiceLibrary)
+local GameConfig    = require(ReplicatedStorage.Config.GameConfig)
 
 local ChoiceService = {}
 
-local _history     = {}
-local _currentPair = nil
-
+-- Возвращает пару { Left = option, Right = option, LeftText, RightText, ... }
 function ChoiceService.PickNextPair()
-	local pair = ChoiceLibrary.GetRandomPair(_history)
-	_currentPair = pair
-	table.insert(_history, pair.Id)
-	if #_history > GameConfig.MAX_HISTORY_PAIRS then
-		table.remove(_history, 1)
-	end
-	return pair
+	return ChoiceLibrary.GetRandomPair(GameConfig.MAX_HISTORY_PAIRS)
 end
 
-function ChoiceService.GetCurrentPair()
-	return _currentPair
-end
-
-function ChoiceService.ClearCurrentPair()
-	_currentPair = nil
+function ChoiceService.ResetHistory()
+	ChoiceLibrary.ResetHistory()
 end
 
 return ChoiceService
