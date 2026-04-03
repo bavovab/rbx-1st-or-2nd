@@ -1,106 +1,100 @@
--- ModuleScript
--- Каждый элемент - отдельная опция, не пара.
--- Система сама случайно выберет две разные опции за раунд.
+-- ModuleScript: ReplicatedStorage/Config/ContentConfig
 
 local ContentConfig = {}
 
-ContentConfig.OPTIONS = {
+-- Каждый вариант — самостоятельная единица.
+-- Сервер каждый раунд берёт 2 случайных РАЗНЫХ варианта.
+-- Image = Asset ID твоей картинки (загрузи в Creator Dashboard → Decals)
+ContentConfig.CHOICES = {
 	{
-		Id       = "Ninjas",
-		Text     = "🥷 Ninjas",
-		Color    = Color3.fromRGB(30, 30, 30),
-		ImageId  = 0,  -- вставь свой AssetId
-		Category = "Warriors",
-		Weight   = 1,
+		Id      = "Ninja",
+		Text    = "NINJA",
+		Color   = Color3.fromRGB(30,  30,  30),
+		Image   = 0,      -- ← вставь Asset ID
+		Weight  = 1,
+		Allowed = true,
 	},
 	{
-		Id       = "Pirates",
-		Text     = "🏴‍☠️ Pirates",
-		Color    = Color3.fromRGB(180, 80, 0),
-		ImageId  = 0,
-		Category = "Warriors",
-		Weight   = 1,
+		Id      = "Pirate",
+		Text    = "PIRATE",
+		Color   = Color3.fromRGB(180, 80,   0),
+		Image   = 0,
+		Weight  = 1,
+		Allowed = true,
 	},
 	{
-		Id       = "Magic",
-		Text     = "✨ Magic",
-		Color    = Color3.fromRGB(120, 0, 200),
-		ImageId  = 0,
-		Category = "Power",
-		Weight   = 1,
+		Id      = "Magic",
+		Text    = "MAGIC",
+		Color   = Color3.fromRGB(120,  0, 200),
+		Image   = 0,
+		Weight  = 1,
+		Allowed = true,
 	},
 	{
-		Id       = "Mecha",
-		Text     = "⚙️ Mecha",
-		Color    = Color3.fromRGB(0, 120, 200),
-		ImageId  = 0,
-		Category = "Power",
-		Weight   = 1,
+		Id      = "Mecha",
+		Text    = "MECHA",
+		Color   = Color3.fromRGB(0,  120, 200),
+		Image   = 0,
+		Weight  = 1,
+		Allowed = true,
 	},
 	{
-		Id       = "Ice",
-		Text     = "❄️ Ice",
-		Color    = Color3.fromRGB(0, 180, 220),
-		ImageId  = 0,
-		Category = "Elements",
-		Weight   = 1,
+		Id      = "Ice",
+		Text    = "ICE",
+		Color   = Color3.fromRGB(0,  180, 220),
+		Image   = 0,
+		Weight  = 1,
+		Allowed = true,
 	},
 	{
-		Id       = "Fire",
-		Text     = "🔥 Fire",
-		Color    = Color3.fromRGB(220, 60, 0),
-		ImageId  = 0,
-		Category = "Elements",
-		Weight   = 1,
+		Id      = "Fire",
+		Text    = "FIRE",
+		Color   = Color3.fromRGB(220, 60,   0),
+		Image   = 0,
+		Weight  = 1,
+		Allowed = true,
 	},
 	{
-		Id       = "Speed",
-		Text     = "⚡ Speed",
-		Color    = Color3.fromRGB(220, 200, 0),
-		ImageId  = 0,
-		Category = "Attributes",
-		Weight   = 1,
+		Id      = "Speed",
+		Text    = "SPEED",
+		Color   = Color3.fromRGB(220, 200,  0),
+		Image   = 0,
+		Weight  = 1,
+		Allowed = true,
 	},
 	{
-		Id       = "Strength",
-		Text     = "💪 Strength",
-		Color    = Color3.fromRGB(180, 40, 40),
-		ImageId  = 0,
-		Category = "Attributes",
-		Weight   = 1,
+		Id      = "Power",
+		Text    = "POWER",
+		Color   = Color3.fromRGB(180, 40,  40),
+		Image   = 0,
+		Weight  = 1,
+		Allowed = true,
 	},
 	{
-		Id       = "Samurai",
-		Text     = "⚔️ Samurai",
-		Color    = Color3.fromRGB(160, 0, 40),
-		ImageId  = 0,
-		Category = "Warriors",
-		Weight   = 1,
+		Id      = "Samurai",
+		Text    = "SAMURAI",
+		Color   = Color3.fromRGB(160,  0,  40),
+		Image   = 0,
+		Weight  = 1,
+		Allowed = true,
 	},
 	{
-		Id       = "Hunters",
-		Text     = "🏹 Hunters",
-		Color    = Color3.fromRGB(40, 100, 40),
-		ImageId  = 0,
-		Category = "Warriors",
-		Weight   = 1,
+		Id      = "Hunter",
+		Text    = "HUNTER",
+		Color   = Color3.fromRGB(40,  100, 40),
+		Image   = 0,
+		Weight  = 1,
+		Allowed = true,
 	},
-	{
-		Id       = "Dragons",
-		Text     = "🐉 Dragons",
-		Color    = Color3.fromRGB(160, 30, 200),
-		ImageId  = 0,
-		Category = "Creatures",
-		Weight   = 1,
-	},
-	{
-		Id       = "Robots",
-		Text     = "🤖 Robots",
-		Color    = Color3.fromRGB(60, 160, 180),
-		ImageId  = 0,
-		Category = "Power",
-		Weight   = 1,
-	},
+	-- Добавляй сколько угодно новых вариантов сюда:
+	-- {
+	--     Id      = "Dragon",
+	--     Text    = "DRAGON",
+	--     Color   = Color3.fromRGB(200, 0, 0),
+	--     Image   = 0,
+	--     Weight  = 1,
+	--     Allowed = true,
+	-- },
 }
 
 ContentConfig.ANIMATION_IDS = {
@@ -114,5 +108,10 @@ ContentConfig.SOUND_IDS = {
 	WinSting      = 0,
 	CountdownTick = 0,
 }
+
+assert(
+	type(ContentConfig.CHOICES) == "table" and #ContentConfig.CHOICES >= 2,
+	"[ContentConfig] CHOICES должен содержать минимум 2 варианта!"
+)
 
 return ContentConfig

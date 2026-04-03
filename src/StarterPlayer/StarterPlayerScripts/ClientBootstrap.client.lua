@@ -1,17 +1,43 @@
 -- LocalScript: StarterPlayer/StarterPlayerScripts/ClientBootstrap.client.lua
--- HUD создаётся здесь же, синхронно, до подключения любых remote listeners.
 
 local Players           = game:GetService("Players")
-local TweenService      = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService      = game:GetService("TweenService")
+local UserInputService  = game:GetService("UserInputService")
 
 local localPlayer = Players.LocalPlayer
 local playerGui   = localPlayer:WaitForChild("PlayerGui")
 
 -- ══════════════════════════════════════════════════════════════
---  СОЗДАНИЕ MainHUD (синхронно, самое первое действие)
+--  REMOTES
 -- ══════════════════════════════════════════════════════════════
+local Remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
+assert(Remotes, "[ClientBootstrap] Remotes не найдены!")
 
+local RoundStateRemote   = Remotes:WaitForChild("RoundState")
+local HUDMessageRemote   = Remotes:WaitForChild("HUDMessage")
+local RoundResultRemote  = Remotes:WaitForChild("RoundResult")
+local PlayCelebRemote    = Remotes:WaitForChild("PlayCelebration")
+local SyncDarkRemote     = Remotes:WaitForChild("SyncDarkness")
+local SubmitChoiceRemote = Remotes:WaitForChild("SubmitChoice")
+local CombatInputRemote  = Remotes:WaitForChild("CombatInput")
+
+-- ══════════════════════════════════════════════════════════════
+--  КОНФИГИ
+-- ══════════════════════════════════════════════════════════════
+local Enums       = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Enums"))
+local GameConfig  = require(ReplicatedStorage:WaitForChild("Config"):WaitForChild("GameConfig"))
+local CombatConfig = require(ReplicatedStorage:WaitForChild("Config"):WaitForChild("CombatConfig"))
+
+-- ══════════════════════════════════════════════════════════════
+--  КОНСТАНТЫ
+-- ══════════════════════════════════════════════════════════════
+local PLACEHOLDER_IMAGE = "rbxassetid://112107392394775"
+local WARN_THRESHOLD    = 5   -- секунд до конца — таймер краснеет
+
+-- ══════════════════════════════════════════════════════════════
+--  HELPERS
+-- ══════════════════════════════════════════════════════════════
 local function make(class, props, parent)
 	local inst = Instance.new(class)
 	for k, v in pairs(props) do
@@ -21,9 +47,17 @@ local function make(class, props, parent)
 	return inst
 end
 
--- Удаляем старый если есть
-local oldHUD = playerGui:FindFirstChild("MainHUD")
-if oldHUD then oldHUD:Destroy() end
+local function tween(inst, props, t, style, dir)
+	style = style or Enum.EasingStyle.Quart
+	dir   = dir   or Enum.EasingDirection.Out
+	TweenService:Create(inst, TweenInfo.new(t, style, dir), props):Play()
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  СОЗДАЁМ MainHUD
+-- ══════════════════════════════════════════════════════════════
+local old = playerGui:FindFirstChild("MainHUD")
+if old then old:Destroy() end
 
 local mainHUD = make("ScreenGui", {
 	Name           = "MainHUD",
@@ -33,640 +67,774 @@ local mainHUD = make("ScreenGui", {
 	DisplayOrder   = 10,
 }, playerGui)
 
--- ── Top Bar ──
+-- ── TOP BAR ──────────────────────────────────────────────────
 local topBar = make("Frame", {
-	Name                   = "TopBar",
-	Size                   = UDim2.new(1, 0, 0, 44),
+	Size                   = UDim2.new(1, 0, 0, 56),
 	Position               = UDim2.new(0, 0, 0, 0),
-	BackgroundColor3       = Color3.fromRGB(10, 10, 20),
-	BackgroundTransparency = 0.35,
+	BackgroundColor3       = Color3.fromRGB(8, 8, 18),
+	BackgroundTransparency = 0,
 	BorderSizePixel        = 0,
 	ZIndex                 = 5,
 }, mainHUD)
+make("UIGradient", {
+	Color    = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(18, 14, 40)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(8,  8,  18)),
+	}),
+	Rotation = 90,
+}, topBar)
 
-make("TextLabel", {
+-- Золотая линия снизу топбара
+make("Frame", {
+	Size             = UDim2.new(1, 0, 0, 2),
+	Position         = UDim2.new(0, 0, 1, -2),
+	BackgroundColor3 = Color3.fromRGB(255, 200, 50),
+	BackgroundTransparency = 0.3,
+	BorderSizePixel  = 0,
+	ZIndex           = 6,
+}, topBar)
+
+local topStatus = make("TextLabel", {
 	Name                   = "TopStatus",
-	Size                   = UDim2.new(1, -20, 1, 0),
-	Position               = UDim2.new(0, 10, 0, 0),
+	Size                   = UDim2.new(1, -24, 1, 0),
+	Position               = UDim2.new(0, 12, 0, 0),
 	BackgroundTransparency = 1,
-	TextColor3             = Color3.fromRGB(255, 255, 255),
+	TextColor3             = Color3.fromRGB(240, 235, 255),
 	TextScaled             = true,
 	Font                   = Enum.Font.GothamBold,
-	Text                   = "⏳ Ожидание...",
-	TextXAlignment         = Enum.TextXAlignment.Left,
+	Text                   = "Waiting...",
+	TextXAlignment         = Enum.TextXAlignment.Center,
 	ZIndex                 = 6,
 }, topBar)
 
--- ── Timer ──
-make("TextLabel", {
+-- TEST MODE badge
+if GameConfig.TEST_MODE then
+	local badge = make("Frame", {
+		Size             = UDim2.new(0, 90, 0, 22),
+		Position         = UDim2.new(1, -96, 0.5, -11),
+		BackgroundColor3 = Color3.fromRGB(255, 160, 0),
+		BorderSizePixel  = 0,
+		ZIndex           = 7,
+	}, topBar)
+	make("UICorner", { CornerRadius = UDim.new(0, 6) }, badge)
+	make("TextLabel", {
+		Size                   = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text                   = "TEST MODE",
+		Font                   = Enum.Font.GothamBold,
+		TextScaled             = true,
+		TextColor3             = Color3.fromRGB(20, 10, 0),
+		ZIndex                 = 8,
+	}, badge)
+end
+
+-- ── TIMER ────────────────────────────────────────────────────
+local timerFrame = make("Frame", {
+	Name             = "TimerFrame",
+	Size             = UDim2.new(0, 110, 0, 46),
+	Position         = UDim2.new(0.5, -55, 0, 60),
+	BackgroundColor3 = Color3.fromRGB(10, 8, 25),
+	BackgroundTransparency = 0.1,
+	BorderSizePixel  = 0,
+	ZIndex           = 7,
+	Visible          = false,
+}, mainHUD)
+make("UICorner",  { CornerRadius = UDim.new(0, 12) }, timerFrame)
+make("UIStroke",  { Color = Color3.fromRGB(255,200,50), Thickness = 1.5, Transparency = 0.4 }, timerFrame)
+
+local timerLabel = make("TextLabel", {
 	Name                   = "TimerLabel",
-	Size                   = UDim2.new(0, 100, 0, 44),
-	Position               = UDim2.new(0.5, -50, 0, 0),
+	Size                   = UDim2.new(1, 0, 1, 0),
 	BackgroundTransparency = 1,
 	TextColor3             = Color3.fromRGB(255, 255, 255),
 	TextScaled             = true,
 	Font                   = Enum.Font.GothamBold,
 	Text                   = "",
-	ZIndex                 = 7,
-}, mainHUD)
+	ZIndex                 = 8,
+}, timerFrame)
 
--- ── Round Banner ──
-make("TextLabel", {
+-- ── ROUND BANNER ─────────────────────────────────────────────
+local roundBanner = make("TextLabel", {
 	Name                   = "RoundBanner",
-	Size                   = UDim2.new(0.8, 0, 0, 70),
-	Position               = UDim2.new(0.1, 0, 0.32, 0),
+	Size                   = UDim2.new(1, 0, 0, 90),
+	Position               = UDim2.new(0, 0, 0.28, 0),
 	BackgroundTransparency = 1,
-	TextColor3             = Color3.fromRGB(255, 220, 0),
+	TextColor3             = Color3.fromRGB(255, 220, 50),
 	TextScaled             = true,
 	Font                   = Enum.Font.GothamBold,
 	Text                   = "",
-	TextStrokeTransparency = 0.4,
+	TextStrokeTransparency = 0,
 	TextStrokeColor3       = Color3.fromRGB(0, 0, 0),
+	TextTransparency       = 1,
 	Visible                = false,
 	ZIndex                 = 8,
 }, mainHUD)
 
--- ── Result Panel ──
+-- ── RESULT PANEL ─────────────────────────────────────────────
 local resultPanel = make("Frame", {
 	Name                   = "ResultPanel",
-	Size                   = UDim2.new(0.44, 0, 0.18, 0),
-	Position               = UDim2.new(0.28, 0, 0.40, 0),
-	BackgroundColor3       = Color3.fromRGB(10, 10, 20),
-	BackgroundTransparency = 0.25,
+	Size                   = UDim2.new(0, 360, 0, 110),
+	Position               = UDim2.new(0.5, -180, 0.35, 0),
+	BackgroundColor3       = Color3.fromRGB(10, 8, 25),
+	BackgroundTransparency = 1,
 	BorderSizePixel        = 0,
 	Visible                = false,
 	ZIndex                 = 9,
 }, mainHUD)
-make("UICorner",  { CornerRadius = UDim.new(0, 18) }, resultPanel)
-make("UIStroke",  { Color = Color3.fromRGB(255, 220, 0), Thickness = 2, Transparency = 0.3 }, resultPanel)
-make("TextLabel", {
+make("UICorner", { CornerRadius = UDim.new(0, 20) }, resultPanel)
+make("UIStroke", { Color = Color3.fromRGB(255,220,50), Thickness = 2.5, Transparency = 0.2 }, resultPanel)
+
+local resultLabel = make("TextLabel", {
 	Name                   = "ResultLabel",
 	Size                   = UDim2.new(1, 0, 1, 0),
 	BackgroundTransparency = 1,
-	TextColor3             = Color3.fromRGB(255, 220, 0),
+	TextColor3             = Color3.fromRGB(255, 220, 50),
 	TextScaled             = true,
 	Font                   = Enum.Font.GothamBold,
 	Text                   = "",
 	ZIndex                 = 10,
 }, resultPanel)
 
--- ── Choice Panel ──
+-- ══════════════════════════════════════════════════════════════
+--  CHOICE PANEL
+-- ══════════════════════════════════════════════════════════════
+--
+--  Структура:
+--  ┌────────────────────────────────────────────────┐
+--  │              A  VS  B  (VS banner)             │
+--  │  ┌─────────────────┐   ┌─────────────────┐    │
+--  │  │   [  IMAGE  ]   │   │   [  IMAGE  ]   │    │
+--  │  │                 │   │                 │    │
+--  │  │     NINJA       │   │     PIRATE      │    │
+--  │  │   [ CHOOSE ]    │   │   [ CHOOSE ]    │    │
+--  │  └─────────────────┘   └─────────────────┘    │
+--  └────────────────────────────────────────────────┘
+
+-- Панель стартует за нижним краем экрана
 local choicePanel = make("Frame", {
 	Name                   = "ChoicePanel",
-	Size                   = UDim2.new(1, 0, 0.42, 0),
-	Position               = UDim2.new(0, 0, 1, 0),   -- скрыт за нижним краем
-	BackgroundTransparency = 1,
+	Size                   = UDim2.new(1, 0, 0.46, 0),
+	Position               = UDim2.new(0, 0, 1.1, 0),
+	BackgroundColor3       = Color3.fromRGB(6, 5, 18),
+	BackgroundTransparency = 0,
+	BorderSizePixel        = 0,
 	Visible                = true,
 	ZIndex                 = 6,
 	ClipsDescendants       = false,
 }, mainHUD)
+make("UICorner", { CornerRadius = UDim.new(0, 24) }, choicePanel)
 
--- Кнопка свернуть
-local collapseBtn = make("TextButton", {
-	Name                   = "CollapseBtn",
-	Size                   = UDim2.new(0, 36, 0, 36),
-	Position               = UDim2.new(0.5, -18, 0, -40),
-	BackgroundColor3       = Color3.fromRGB(30, 30, 50),
-	BackgroundTransparency = 0.2,
-	TextColor3             = Color3.fromRGB(255, 255, 255),
-	Text                   = "▼",
-	Font                   = Enum.Font.GothamBold,
-	TextScaled             = true,
-	ZIndex                 = 10,
-	BorderSizePixel        = 0,
-}, choicePanel)
-make("UICorner", { CornerRadius = UDim.new(0, 8) }, collapseBtn)
-
--- Left Card
-local leftCard = make("Frame", {
-	Name                   = "LeftCard",
-	Size                   = UDim2.new(0.46, 0, 0.88, 0),
-	Position               = UDim2.new(0.02, 0, 0.06, 0),
-	BackgroundColor3       = Color3.fromRGB(20, 80, 200),
-	BackgroundTransparency = 0.05,
-	BorderSizePixel        = 0,
-	ZIndex                 = 7,
-}, choicePanel)
-make("UICorner", { CornerRadius = UDim.new(0, 16) }, leftCard)
-make("UIStroke", { Name = "Border", Color = Color3.fromRGB(80,80,80), Thickness = 3 }, leftCard)
-make("UIGradient", {
-	Color    = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(40, 100, 255)),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(10,  50, 160)),
-	}),
-	Rotation = 135,
-}, leftCard)
-make("TextLabel", { Name="Emoji",  Size=UDim2.new(1,0,0.38,0), Position=UDim2.new(0,0,0.04,0), BackgroundTransparency=1, TextColor3=Color3.new(1,1,1), TextScaled=true, Font=Enum.Font.GothamBold, Text="?",      ZIndex=8 }, leftCard)
-make("TextLabel", { Name="Label",  Size=UDim2.new(1,-10,0.28,0), Position=UDim2.new(0,5,0.42,0), BackgroundTransparency=1, TextColor3=Color3.new(1,1,1), TextScaled=true, Font=Enum.Font.GothamBold, Text="Левый", ZIndex=8 }, leftCard)
-make("TextLabel", { Name="VoteCount", Size=UDim2.new(1,0,0.16,0), Position=UDim2.new(0,0,0.72,0), BackgroundTransparency=1, TextColor3=Color3.fromRGB(200,230,255), TextScaled=true, Font=Enum.Font.Gotham, Text="", ZIndex=8 }, leftCard)
-local leftBtn = make("TextButton", {
-	Name="Button", Size=UDim2.new(0.7,0,0.22,0), Position=UDim2.new(0.15,0,0.75,0),
-	BackgroundColor3=Color3.new(1,1,1), BackgroundTransparency=0.1,
-	TextColor3=Color3.fromRGB(20,60,180), Font=Enum.Font.GothamBold,
-	Text="Выбрать", TextScaled=true, ZIndex=9, BorderSizePixel=0,
-}, leftCard)
-make("UICorner", { CornerRadius=UDim.new(0,10) }, leftBtn)
-
--- Right Card
-local rightCard = make("Frame", {
-	Name                   = "RightCard",
-	Size                   = UDim2.new(0.46, 0, 0.88, 0),
-	Position               = UDim2.new(0.52, 0, 0.06, 0),
-	BackgroundColor3       = Color3.fromRGB(180, 50, 10),
-	BackgroundTransparency = 0.05,
-	BorderSizePixel        = 0,
-	ZIndex                 = 7,
-}, choicePanel)
-make("UICorner", { CornerRadius = UDim.new(0, 16) }, rightCard)
-make("UIStroke", { Name = "Border", Color = Color3.fromRGB(80,80,80), Thickness = 3 }, rightCard)
-make("UIGradient", {
-	Color    = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 80,  20)),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(140, 30,   0)),
-	}),
-	Rotation = 135,
-}, rightCard)
-make("TextLabel", { Name="Emoji",  Size=UDim2.new(1,0,0.38,0), Position=UDim2.new(0,0,0.04,0), BackgroundTransparency=1, TextColor3=Color3.new(1,1,1), TextScaled=true, Font=Enum.Font.GothamBold, Text="?",       ZIndex=8 }, rightCard)
-make("TextLabel", { Name="Label",  Size=UDim2.new(1,-10,0.28,0), Position=UDim2.new(0,5,0.42,0), BackgroundTransparency=1, TextColor3=Color3.new(1,1,1), TextScaled=true, Font=Enum.Font.GothamBold, Text="Правый", ZIndex=8 }, rightCard)
-make("TextLabel", { Name="VoteCount", Size=UDim2.new(1,0,0.16,0), Position=UDim2.new(0,0,0.72,0), BackgroundTransparency=1, TextColor3=Color3.fromRGB(255,200,180), TextScaled=true, Font=Enum.Font.Gotham, Text="", ZIndex=8 }, rightCard)
-local rightBtn = make("TextButton", {
-	Name="Button", Size=UDim2.new(0.7,0,0.22,0), Position=UDim2.new(0.15,0,0.75,0),
-	BackgroundColor3=Color3.new(1,1,1), BackgroundTransparency=0.1,
-	TextColor3=Color3.fromRGB(160,40,0), Font=Enum.Font.GothamBold,
-	Text="Выбрать", TextScaled=true, ZIndex=9, BorderSizePixel=0,
-}, rightCard)
-make("UICorner", { CornerRadius=UDim.new(0,10) }, rightBtn)
-
--- Vote Timer Frame (внутри choicePanel)
-local voteTimerFrame = make("Frame", {
-	Name                   = "VoteTimerFrame",
-	Size                   = UDim2.new(0.3, 0, 0, 34),
-	Position               = UDim2.new(0.35, 0, 0, -38),
-	BackgroundColor3       = Color3.fromRGB(10, 10, 20),
-	BackgroundTransparency = 0.2,
-	BorderSizePixel        = 0,
-	ZIndex                 = 10,
-	Visible                = false,
-}, choicePanel)
-make("UICorner", { CornerRadius=UDim.new(0,8) }, voteTimerFrame)
-local voteTimerLabel = make("TextLabel", {
-	Name="VoteTimer", Size=UDim2.new(1,0,1,0),
-	BackgroundTransparency=1, TextColor3=Color3.fromRGB(255,255,100),
-	TextScaled=true, Font=Enum.Font.GothamBold, Text="10", ZIndex=11,
-}, voteTimerFrame)
-
--- Mini Panel (свёрнутое состояние — живёт в mainHUD)
-local miniPanel = make("Frame", {
-	Name                   = "MiniPanel",
-	Size                   = UDim2.new(0, 220, 0, 44),
-	Position               = UDim2.new(0.5, -110, 1, -54),
-	BackgroundColor3       = Color3.fromRGB(10, 10, 20),
-	BackgroundTransparency = 0.15,
-	BorderSizePixel        = 0,
-	Visible                = false,
-	ZIndex                 = 12,
-}, mainHUD)
-make("UICorner", { CornerRadius=UDim.new(0,10) }, miniPanel)
-make("UIStroke",  { Color=Color3.fromRGB(255,220,0), Thickness=1.5, Transparency=0.4 }, miniPanel)
-local miniLabel = make("TextLabel", {
-	Name="MiniLabel", Size=UDim2.new(0.72,0,1,0), Position=UDim2.new(0,8,0,0),
-	BackgroundTransparency=1, TextColor3=Color3.new(1,1,1),
-	TextScaled=true, Font=Enum.Font.GothamBold, Text="⏳ Не выбрано",
-	TextXAlignment=Enum.TextXAlignment.Left, ZIndex=13,
-}, miniPanel)
-local miniTimer = make("TextLabel", {
-	Name="MiniTimer", Size=UDim2.new(0.26,0,1,0), Position=UDim2.new(0.74,0,0,0),
-	BackgroundTransparency=1, TextColor3=Color3.fromRGB(255,255,100),
-	TextScaled=true, Font=Enum.Font.GothamBold, Text="", ZIndex=13,
-}, miniPanel)
-
--- Fade Frame (заглушка, затемнение убрано)
+-- Верхняя декоративная линия панели
 make("Frame", {
-	Name="FadeFrame", Size=UDim2.new(1,0,1,0),
-	BackgroundColor3=Color3.new(0,0,0), BackgroundTransparency=1,
-	Visible=false, ZIndex=20, BorderSizePixel=0,
-}, mainHUD)
+	Size             = UDim2.new(1, 0, 0, 3),
+	BackgroundColor3 = Color3.fromRGB(255, 200, 50),
+	BackgroundTransparency = 0,
+	BorderSizePixel  = 0,
+	ZIndex           = 7,
+}, choicePanel)
+
+make("UIGradient", {
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0,   Color3.fromRGB(255, 180, 20)),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 230, 80)),
+		ColorSequenceKeypoint.new(1,   Color3.fromRGB(255, 180, 20)),
+	}),
+	Rotation = 0,
+}, choicePanel:FindFirstChildOfClass("Frame"))
+
+-- VS Banner
+local vsBanner = make("TextLabel", {
+	Name                   = "VSBanner",
+	Size                   = UDim2.new(1, 0, 0, 36),
+	Position               = UDim2.new(0, 0, 0, 8),
+	BackgroundTransparency = 1,
+	TextColor3             = Color3.fromRGB(255, 215, 50),
+	TextScaled             = true,
+	Font                   = Enum.Font.GothamBold,
+	Text                   = "CHOOSE YOUR SIDE",
+	TextStrokeTransparency = 0.5,
+	TextStrokeColor3       = Color3.fromRGB(0, 0, 0),
+	ZIndex                 = 7,
+}, choicePanel)
+
+-- ── Функция карточки ──────────────────────────────────────────
+local function makeCard(parent, name, xPos, accentColor)
+	local card = make("Frame", {
+		Name                   = name,
+		Size                   = UDim2.new(0.46, 0, 0.84, 0),
+		Position               = UDim2.new(xPos, 0, 0.12, 0),
+		BackgroundColor3       = Color3.fromRGB(12, 10, 30),
+		BackgroundTransparency = 0,
+		BorderSizePixel        = 0,
+		ZIndex                 = 7,
+	}, parent)
+	make("UICorner", { CornerRadius = UDim.new(0, 16) }, card)
+	make("UIStroke", {
+		Color           = accentColor,
+		Thickness       = 2,
+		Transparency    = 0.5,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	}, card)
+
+	-- Цветная полоска сверху карточки (акцент команды)
+	local topStripe = make("Frame", {
+		Name             = "TopStripe",
+		Size             = UDim2.new(1, 0, 0, 5),
+		BackgroundColor3 = accentColor,
+		BackgroundTransparency = 0,
+		BorderSizePixel  = 0,
+		ZIndex           = 8,
+	}, card)
+	make("UICorner", { CornerRadius = UDim.new(0, 16) }, topStripe)
+
+	-- Контейнер картинки (верхние 54%)
+	local imgBox = make("Frame", {
+		Name                   = "ImageContainer",
+		Size                   = UDim2.new(1, -16, 0.54, -10),
+		Position               = UDim2.new(0, 8, 0, 14),
+		BackgroundColor3       = Color3.fromRGB(0, 0, 0),
+		BackgroundTransparency = 0.6,
+		BorderSizePixel        = 0,
+		ZIndex                 = 8,
+		ClipsDescendants       = true,
+	}, card)
+	make("UICorner", { CornerRadius = UDim.new(0, 12) }, imgBox)
+	make("UIStroke", {
+		Color        = accentColor,
+		Thickness    = 1.5,
+		Transparency = 0.6,
+	}, imgBox)
+
+	-- Картинка
+	make("ImageLabel", {
+		Name                   = "CardImage",
+		Size                   = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Image                  = PLACEHOLDER_IMAGE,
+		ScaleType              = Enum.ScaleType.Fit,
+		ZIndex                 = 9,
+	}, imgBox)
+
+	-- Название варианта
+	local labelBg = make("Frame", {
+		Name             = "LabelBg",
+		Size             = UDim2.new(1, 0, 0.20, 0),
+		Position         = UDim2.new(0, 0, 0.56, 0),
+		BackgroundColor3 = accentColor,
+		BackgroundTransparency = 0.75,
+		BorderSizePixel  = 0,
+		ZIndex           = 8,
+	}, card)
+
+	make("TextLabel", {
+		Name                   = "Label",
+		Size                   = UDim2.new(1, -8, 1, 0),
+		Position               = UDim2.new(0, 4, 0, 0),
+		BackgroundTransparency = 1,
+		TextColor3             = Color3.fromRGB(255, 255, 255),
+		TextScaled             = true,
+		Font                   = Enum.Font.GothamBold,
+		Text                   = "???",
+		TextStrokeTransparency = 0.4,
+		TextStrokeColor3       = Color3.fromRGB(0, 0, 0),
+		ZIndex                 = 9,
+	}, labelBg)
+
+	-- Кнопка CHOOSE
+	local btn = make("TextButton", {
+		Name                   = "Button",
+		Size                   = UDim2.new(0.78, 0, 0.17, 0),
+		Position               = UDim2.new(0.11, 0, 0.80, 0),
+		BackgroundColor3       = accentColor,
+		TextColor3             = Color3.fromRGB(255, 255, 255),
+		Font                   = Enum.Font.GothamBold,
+		Text                   = "CHOOSE",
+		TextScaled             = true,
+		BorderSizePixel        = 0,
+		AutoButtonColor        = false,
+		ZIndex                 = 9,
+	}, card)
+	make("UICorner", { CornerRadius = UDim.new(0, 10) }, btn)
+	make("UIStroke", {
+		Color        = Color3.fromRGB(255, 255, 255),
+		Thickness    = 1.5,
+		Transparency = 0.6,
+	}, btn)
+
+	-- Hover/press анимация кнопки
+	btn.MouseEnter:Connect(function()
+		tween(btn, { BackgroundTransparency = 0.2 }, 0.12)
+	end)
+	btn.MouseLeave:Connect(function()
+		tween(btn, { BackgroundTransparency = 0 }, 0.12)
+	end)
+	btn.MouseButton1Down:Connect(function()
+		tween(btn, { Size = UDim2.new(0.72, 0, 0.15, 0), Position = UDim2.new(0.14, 0, 0.82, 0) }, 0.08)
+	end)
+	btn.MouseButton1Up:Connect(function()
+		tween(btn, { Size = UDim2.new(0.78, 0, 0.17, 0), Position = UDim2.new(0.11, 0, 0.80, 0) }, 0.12)
+	end)
+
+	return card
+end
+
+local leftCard  = makeCard(choicePanel, "LeftCard",  0.02, Color3.fromRGB(60, 140, 255))
+local rightCard = makeCard(choicePanel, "RightCard", 0.52, Color3.fromRGB(255, 90,  40))
+
+choicePanel.Visible = false
 
 print("[ClientBootstrap] MainHUD создан.")
 
 -- ══════════════════════════════════════════════════════════════
---  REMOTES
+--  HUD FUNCTIONS
 -- ══════════════════════════════════════════════════════════════
-local Remotes = ReplicatedStorage:WaitForChild("Remotes", 20)
-if not Remotes then warn("[ClientBootstrap] Remotes не найдены.") return end
+local HUD = {}
 
-local RoundState      = Remotes:WaitForChild("RoundState")
-local HUDMessage      = Remotes:WaitForChild("HUDMessage")
-local RoundResult     = Remotes:WaitForChild("RoundResult")
-local PlayCelebration = Remotes:WaitForChild("PlayCelebration")
-local SubmitChoice    = Remotes:WaitForChild("SubmitChoice")
-
--- ══════════════════════════════════════════════════════════════
---  SHARED
--- ══════════════════════════════════════════════════════════════
-local Enums      = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Enums"))
-local UIConfig   = require(ReplicatedStorage:WaitForChild("Config"):WaitForChild("UIConfig"))
-local GameConfig = require(ReplicatedStorage:WaitForChild("Config"):WaitForChild("GameConfig"))
-
--- ══════════════════════════════════════════════════════════════
---  INLINE CHOICE CONTROLLER
---  (не зависит от внешнего модуля — всё в одном месте)
--- ══════════════════════════════════════════════════════════════
-local POS_HIDDEN  = UDim2.new(0, 0, 1,    0)
-local POS_VISIBLE = UDim2.new(0, 0, 0.58, 0)
-
-local TWEEN_IN  = TweenInfo.new(0.55, Enum.EasingStyle.Back,  Enum.EasingDirection.Out)
-local TWEEN_OUT = TweenInfo.new(0.35, Enum.EasingStyle.Quad,  Enum.EasingDirection.In)
-local TWEEN_SEL = TweenInfo.new(0.18, Enum.EasingStyle.Quad,  Enum.EasingDirection.Out)
-
-local COLOR_SELECTED   = Color3.fromRGB(255, 220, 0)
-local COLOR_UNSELECTED = Color3.fromRGB(80,  80,  80)
-local COLOR_DIM        = Color3.fromRGB(40,  40,  40)
-
-local leftBorder  = leftCard:FindFirstChildOfClass("UIStroke")
-local rightBorder = rightCard:FindFirstChildOfClass("UIStroke")
-
-local currentSide   = nil
-local choiceEnabled = false
-local isCollapsed   = false
-local timerThread   = nil
-
-local function splitEmoji(text)
-	local emoji, name = text:match("^(%S+)%s+(.+)$")
-	if emoji and name then return emoji, name end
-	return "", text
+function HUD.SetStatus(text, color)
+	topStatus.Text       = text or ""
+	topStatus.TextColor3 = color or Color3.fromRGB(240, 235, 255)
 end
 
-local function setLeftText(text)
-	local e, n = splitEmoji(text)
-	leftCard:FindFirstChild("Emoji").Text = e
-	leftCard:FindFirstChild("Label").Text = n
-end
-
-local function setRightText(text)
-	local e, n = splitEmoji(text)
-	rightCard:FindFirstChild("Emoji").Text = e
-	rightCard:FindFirstChild("Label").Text = n
-end
-
-local function highlightSide(side)
-	if side == Enums.Team.Left then
-		TweenService:Create(leftBorder,  TWEEN_SEL, { Color=COLOR_SELECTED,   Thickness=5 }):Play()
-		TweenService:Create(rightBorder, TWEEN_SEL, { Color=COLOR_DIM,        Thickness=2 }):Play()
-		TweenService:Create(leftCard,    TWEEN_SEL, { BackgroundTransparency=0.0  }):Play()
-		TweenService:Create(rightCard,   TWEEN_SEL, { BackgroundTransparency=0.55 }):Play()
-	elseif side == Enums.Team.Right then
-		TweenService:Create(rightBorder, TWEEN_SEL, { Color=COLOR_SELECTED,   Thickness=5 }):Play()
-		TweenService:Create(leftBorder,  TWEEN_SEL, { Color=COLOR_DIM,        Thickness=2 }):Play()
-		TweenService:Create(rightCard,   TWEEN_SEL, { BackgroundTransparency=0.0  }):Play()
-		TweenService:Create(leftCard,    TWEEN_SEL, { BackgroundTransparency=0.55 }):Play()
-	else
-		TweenService:Create(leftBorder,  TWEEN_SEL, { Color=COLOR_UNSELECTED, Thickness=3 }):Play()
-		TweenService:Create(rightBorder, TWEEN_SEL, { Color=COLOR_UNSELECTED, Thickness=3 }):Play()
-		TweenService:Create(leftCard,    TWEEN_SEL, { BackgroundTransparency=0.05 }):Play()
-		TweenService:Create(rightCard,   TWEEN_SEL, { BackgroundTransparency=0.05 }):Play()
-	end
-end
-
-local function updateMiniLabel(side)
-	if side == Enums.Team.Left then
-		miniLabel.Text       = "✅ " .. leftCard:FindFirstChild("Label").Text
-		miniLabel.TextColor3 = Color3.fromRGB(100, 180, 255)
-	elseif side == Enums.Team.Right then
-		miniLabel.Text       = "✅ " .. rightCard:FindFirstChild("Label").Text
-		miniLabel.TextColor3 = Color3.fromRGB(255, 140, 80)
-	else
-		miniLabel.Text       = "⏳ Не выбрано"
-		miniLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-	end
-end
-
-local function stopTimer()
-	if timerThread then task.cancel(timerThread) timerThread = nil end
-	voteTimerFrame.Visible = false
-end
-
-local function startTimer(seconds)
-	stopTimer()
-	voteTimerFrame.Visible = true
-	voteTimerLabel.Text    = tostring(seconds)
-	miniTimer.Text         = tostring(seconds)
-	timerThread = task.spawn(function()
-		for i = seconds, 0, -1 do
-			voteTimerLabel.Text = tostring(i)
-			miniTimer.Text      = tostring(i)
-			if i <= 5 then
-				voteTimerLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
-				miniTimer.TextColor3      = Color3.fromRGB(255, 80, 80)
-				-- пульс
-				voteTimerLabel.TextSize = 28
-				TweenService:Create(voteTimerLabel,
-					TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-					{ TextSize = 18 }):Play()
-			else
-				voteTimerLabel.TextColor3 = Color3.fromRGB(255, 255, 100)
-				miniTimer.TextColor3      = Color3.fromRGB(255, 255, 100)
-			end
-			if i > 0 then task.wait(1) end
-		end
-		voteTimerFrame.Visible = false
-	end)
-end
-
-local function slideIn()
-	isCollapsed = false
-	collapseBtn.Text    = "▼"
-	choicePanel.Visible = true
-	miniPanel.Visible   = false
-	choicePanel.Position = POS_HIDDEN
-	TweenService:Create(choicePanel, TWEEN_IN, { Position = POS_VISIBLE }):Play()
-end
-
-local function slideOut()
-	TweenService:Create(choicePanel, TWEEN_OUT, { Position = POS_HIDDEN }):Play()
-	task.delay(0.36, function() choicePanel.Visible = false end)
-	miniPanel.Visible = false
-end
-
-local function collapse()
-	if isCollapsed then return end
-	isCollapsed = true
-	collapseBtn.Text = "▲"
-	updateMiniLabel(currentSide)
-	TweenService:Create(choicePanel, TWEEN_OUT, { Position = POS_HIDDEN }):Play()
-	task.delay(0.2, function()
-		choicePanel.Visible = false
-		miniPanel.Visible   = true
-	end)
-end
-
-local function expand()
-	if not isCollapsed then return end
-	isCollapsed = false
-	collapseBtn.Text    = "▼"
-	miniPanel.Visible   = false
-	choicePanel.Visible = true
-	choicePanel.Position = POS_HIDDEN
-	TweenService:Create(choicePanel, TWEEN_IN, { Position = POS_VISIBLE }):Play()
-end
-
-local function selectSide(side)
-	if not choiceEnabled then return end
-	currentSide = side
-	SubmitChoice:FireServer({ Side = side })
-	highlightSide(side)
-	updateMiniLabel(side)
-	-- кнопочный bounce
-	local btn = (side == Enums.Team.Left) and leftBtn or rightBtn
-	local orig = btn.Size
-	TweenService:Create(btn, TweenInfo.new(0.07), { Size = orig - UDim2.new(0.04,0,0.06,0) }):Play()
-	task.delay(0.07, function()
-		TweenService:Create(btn, TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Size = orig }):Play()
-	end)
-end
-
--- Кнопки
-leftBtn.MouseButton1Click:Connect(function()  selectSide(Enums.Team.Left)  end)
-rightBtn.MouseButton1Click:Connect(function() selectSide(Enums.Team.Right) end)
-collapseBtn.MouseButton1Click:Connect(function()
-	if isCollapsed then expand() else collapse() end
-end)
-miniPanel.InputBegan:Connect(function(inp)
-	if inp.UserInputType == Enum.UserInputType.MouseButton1
-		or inp.UserInputType == Enum.UserInputType.Touch then
-		expand()
-	end
-end)
-
--- ══════════════════════════════════════════════════════════════
---  HUD HELPERS
--- ══════════════════════════════════════════════════════════════
-local topStatus  = topBar:WaitForChild("TopStatus")
-local timerLabel = mainHUD:WaitForChild("TimerLabel")
-local roundBanner = mainHUD:WaitForChild("RoundBanner")
-local resultLabel = resultPanel:WaitForChild("ResultLabel")
-
-local function setStatus(text, color)
-	topStatus.Text       = (GameConfig.TEST_MODE and "[TEST] " or "") .. (text or "")
-	topStatus.TextColor3 = color or Color3.new(1,1,1)
-end
-
-local function setTimer(seconds)
-	if seconds == nil then
-		timerLabel.Text    = ""
-		timerLabel.Visible = false
+function HUD.SetTimer(seconds)
+	if seconds == nil or seconds < 0 then
+		tween(timerFrame, { BackgroundTransparency = 1 }, 0.2)
+		task.delay(0.2, function() timerFrame.Visible = false end)
 		return
 	end
-	timerLabel.Visible    = true
-	timerLabel.Text       = string.format("%d:%02d", math.floor(seconds/60), seconds%60)
-	timerLabel.TextColor3 = seconds <= 5
-		and Color3.fromRGB(255, 80, 80)
-		or  Color3.fromRGB(255, 255, 255)
+	timerFrame.Visible = true
+	timerFrame.BackgroundTransparency = 0.1
+	local m = math.floor(seconds / 60)
+	local s = math.floor(seconds % 60)
+	timerLabel.Text = string.format("%d:%02d", m, s)
+
+	if seconds <= WARN_THRESHOLD then
+		timerLabel.TextColor3 = Color3.fromRGB(255, 80, 60)
+		-- Пульс
+		tween(timerFrame, { Size = UDim2.new(0, 122, 0, 52) }, 0.1, Enum.EasingStyle.Bounce)
+		task.delay(0.15, function()
+			tween(timerFrame, { Size = UDim2.new(0, 110, 0, 46) }, 0.1)
+		end)
+	else
+		timerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	end
 end
 
-local function showBanner(text, color)
-	roundBanner.Text        = text
-	roundBanner.TextColor3  = color or Color3.new(1,1,1)
-	roundBanner.TextTransparency = 0
-	roundBanner.Visible = true
-	task.delay(2.5, function()
-		TweenService:Create(roundBanner,
-			TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ TextTransparency = 1 }):Play()
-		task.delay(0.4, function() roundBanner.Visible = false end)
+function HUD.ShowBanner(text, color, duration)
+	roundBanner.Text             = text or ""
+	roundBanner.TextColor3       = color or Color3.fromRGB(255, 220, 50)
+	roundBanner.TextTransparency = 1
+	roundBanner.Size             = UDim2.new(1, 0, 0, 70)
+	roundBanner.Visible          = true
+
+	-- Появление + увеличение
+	tween(roundBanner, { TextTransparency = 0, Size = UDim2.new(1, 0, 0, 90) }, 0.25,
+		Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+	task.delay(duration or 2.5, function()
+		tween(roundBanner, { TextTransparency = 1, Size = UDim2.new(1, 0, 0, 70) }, 0.3)
+		task.delay(0.3, function() roundBanner.Visible = false end)
 	end)
 end
 
-local function showResult(isWinner, isDraw)
-	resultPanel.Visible = true
-	resultPanel.BackgroundTransparency = 1
+function HUD.ShowResult(isWinner, isDraw)
+	local text, color, strokeColor
 	if isDraw then
-		resultLabel.Text       = "🤝 Ничья"
-		resultLabel.TextColor3 = Color3.fromRGB(200,200,200)
+		text        = "DRAW"
+		color       = Color3.fromRGB(200, 200, 200)
+		strokeColor = Color3.fromRGB(150, 150, 150)
 	elseif isWinner then
-		resultLabel.Text       = "🏆 ПОБЕДА!"
-		resultLabel.TextColor3 = Color3.fromRGB(255,220,0)
+		text        = "VICTORY!"
+		color       = Color3.fromRGB(255, 215, 50)
+		strokeColor = Color3.fromRGB(255, 150, 0)
 	else
-		resultLabel.Text       = "💀 Поражение"
-		resultLabel.TextColor3 = Color3.fromRGB(200,60,60)
+		text        = "DEFEATED"
+		color       = Color3.fromRGB(220, 70, 70)
+		strokeColor = Color3.fromRGB(140, 20, 20)
 	end
-	TweenService:Create(resultPanel,
-		TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ BackgroundTransparency = 0.25 }):Play()
+
+	resultLabel.Text             = text
+	resultLabel.TextColor3       = color
+	resultLabel.TextStrokeColor3 = strokeColor
+	resultLabel.TextStrokeTransparency = 0.3
+
+	resultPanel.BackgroundTransparency = 1
+	resultPanel.Size     = UDim2.new(0, 300, 0, 90)
+	resultPanel.Position = UDim2.new(0.5, -150, 0.32, 0)
+	resultPanel.Visible  = true
+
+	tween(resultPanel, {
+		BackgroundTransparency = 0.08,
+		Size     = UDim2.new(0, 380, 0, 114),
+		Position = UDim2.new(0.5, -190, 0.35, 0),
+	}, 0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 end
 
-local function hideResult()
-	TweenService:Create(resultPanel,
-		TweenInfo.new(0.3), { BackgroundTransparency = 1 }):Play()
+function HUD.HideResult()
+	tween(resultPanel, { BackgroundTransparency = 1 }, 0.3)
 	task.delay(0.3, function() resultPanel.Visible = false end)
 end
 
-local function choiceRevealA(text, color)
-	setLeftText(text)
-	leftCard.BackgroundColor3       = color or Color3.fromRGB(20,80,200)
-	leftCard.BackgroundTransparency = 0.05
-	rightCard:FindFirstChild("Emoji").Text = "?"
-	rightCard:FindFirstChild("Label").Text = "???"
-	rightCard.BackgroundTransparency = 0.75
-	rightBtn.BackgroundTransparency  = 0.85
-	highlightSide(nil)
+-- ══════════════════════════════════════════════════════════════
+--  CHOICE FUNCTIONS
+-- ══════════════════════════════════════════════════════════════
+local choiceEnabled = false
+local currentSide   = nil
+
+local function getCardParts(card)
+	local imgBox   = card:FindFirstChild("ImageContainer")
+	local img      = imgBox  and imgBox:FindFirstChild("CardImage")
+	local labelBg  = card:FindFirstChild("LabelBg")
+	local label    = labelBg and labelBg:FindFirstChild("Label")
+	local btn      = card:FindFirstChild("Button")
+	local stripe   = card:FindFirstChild("TopStripe")
+	return img, label, btn, stripe
+end
+
+local function setCardContent(card, text, color, imageId)
+	if not card then return end
+	local img, label, btn, stripe = getCardParts(card)
+
+	-- Обновляем акцент-цвет
+	if stripe then stripe.BackgroundColor3 = color end
+	if btn    then btn.BackgroundColor3    = color end
+
+	-- Текст
+	if label then label.Text = text or "???" end
+
+	-- Картинка: если 0 или nil — используем placeholder
+	if img then
+		if imageId and imageId ~= 0 then
+			img.Image = "rbxassetid://" .. tostring(imageId)
+		else
+			img.Image = PLACEHOLDER_IMAGE
+		end
+	end
+
+	card.Visible = true
+	card.BackgroundTransparency = 0
+end
+
+local function resetCardHighlight(card, accentColor)
+	local stroke = card:FindFirstChildOfClass("UIStroke")
+	if stroke then
+		stroke.Color       = accentColor
+		stroke.Thickness   = 2
+		stroke.Transparency = 0.5
+	end
+	tween(card, { BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(12, 10, 30) }, 0.2)
+end
+
+local function highlightSelected(side)
+	local leftAccent  = Color3.fromRGB(60,  140, 255)
+	local rightAccent = Color3.fromRGB(255,  90,  40)
+	local dim         = 0.55
+
+	if side == Enums.Team.Left then
+		-- Left: яркая рамка
+		local s = leftCard:FindFirstChildOfClass("UIStroke")
+		if s then s.Color = Color3.fromRGB(255,215,50); s.Thickness = 4; s.Transparency = 0 end
+		tween(leftCard,  { BackgroundTransparency = 0 }, 0.15)
+		-- Right: потускнеть
+		local sr = rightCard:FindFirstChildOfClass("UIStroke")
+		if sr then sr.Transparency = 0.8 end
+		tween(rightCard, { BackgroundTransparency = dim }, 0.15)
+	else
+		-- Right: яркая рамка
+		local s = rightCard:FindFirstChildOfClass("UIStroke")
+		if s then s.Color = Color3.fromRGB(255,215,50); s.Thickness = 4; s.Transparency = 0 end
+		tween(rightCard, { BackgroundTransparency = 0 }, 0.15)
+		-- Left: потускнеть
+		local sl = leftCard:FindFirstChildOfClass("UIStroke")
+		if sl then sl.Transparency = 0.8 end
+		tween(leftCard,  { BackgroundTransparency = dim }, 0.15)
+	end
+end
+
+-- Слайд-анимация панели
+local function slidePanel(show)
+	choicePanel.Visible = true
+	local target = show
+		and UDim2.new(0, 0, 0.54, 0)
+		or  UDim2.new(0, 0, 1.1,  0)
+	tween(choicePanel, { Position = target }, 0.45,
+		Enum.EasingStyle.Back,
+		show and Enum.EasingDirection.Out or Enum.EasingDirection.In)
+	if not show then
+		task.delay(0.5, function()
+			choicePanel.Visible = false
+		end)
+	end
+end
+
+-- Анимация появления одной карточки
+local function animateCardIn(card, delay)
+	card.Position = UDim2.new(card.Position.X.Scale, card.Position.X.Offset,
+		card.Position.Y.Scale + 0.08, card.Position.Y.Offset)
+	card.BackgroundTransparency = 1
+	task.delay(delay, function()
+		tween(card, {
+			Position = UDim2.new(card.Position.X.Scale, card.Position.X.Offset,
+				card.Position.Y.Scale - 0.08, card.Position.Y.Offset),
+			BackgroundTransparency = 0,
+		}, 0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	end)
+end
+
+local function submitChoice(side)
+	if not choiceEnabled then return end
+	currentSide = side
+	highlightSelected(side)
+	SubmitChoiceRemote:FireServer({ Side = side })
+end
+
+-- Подключаем кнопки
+local lBtn = leftCard:FindFirstChild("Button")
+local rBtn = rightCard:FindFirstChild("Button")
+if lBtn then lBtn.MouseButton1Click:Connect(function() submitChoice(Enums.Team.Left)  end) end
+if rBtn then rBtn.MouseButton1Click:Connect(function() submitChoice(Enums.Team.Right) end) end
+
+local Choice = {}
+
+function Choice.RevealA(text, color, imageId)
 	choiceEnabled = false
-	slideIn()
+	currentSide   = nil
+	rightCard.Visible = false
+	setCardContent(leftCard, text, color, imageId)
+	if vsBanner then vsBanner.Text = text or "???" end
+	slidePanel(true)
+	animateCardIn(leftCard, 0.1)
 end
 
-local function choiceRevealB(text, color)
-	setRightText(text)
-	rightCard.BackgroundColor3       = color or Color3.fromRGB(180,50,10)
-	rightCard.BackgroundTransparency = 0.75
-	rightBtn.BackgroundTransparency  = 0.85
-	-- анимация появления правой карты
-	rightCard.Size = UDim2.new(0.36, 0, 0.88, 0)
-	TweenService:Create(rightCard,
-		TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Size = UDim2.new(0.46,0,0.88,0), BackgroundTransparency = 0.05 }):Play()
-	TweenService:Create(rightBtn,
-		TweenInfo.new(0.4),
-		{ BackgroundTransparency = 0.1 }):Play()
+function Choice.RevealB(text, color, imageId)
+	setCardContent(rightCard, text, color, imageId)
+	rightCard.Visible = true
+	animateCardIn(rightCard, 0.05)
+	local lLabel = leftCard:FindFirstChild("LabelBg") and leftCard.LabelBg:FindFirstChild("Label")
+	local lt = lLabel and lLabel.Text or "???"
+	if vsBanner then
+		vsBanner.Text = lt .. "  VS  " .. (text or "???")
+	end
 end
 
-local function choiceShowFull(data)
+function Choice.ShowFull(data)
 	choiceEnabled = true
 	currentSide   = nil
-	isCollapsed   = false
-	collapseBtn.Text = "▼"
-	if data.LeftText  then setLeftText(data.LeftText)   end
-	if data.RightText then setRightText(data.RightText) end
-	if data.LeftColor  then leftCard.BackgroundColor3  = data.LeftColor  end
-	if data.RightColor then rightCard.BackgroundColor3 = data.RightColor end
-	leftCard.BackgroundTransparency  = 0.05
-	rightCard.BackgroundTransparency = 0.05
-	leftBtn.BackgroundTransparency   = 0.1
-	rightBtn.BackgroundTransparency  = 0.1
-	highlightSide(nil)
-	if not choicePanel.Visible or choicePanel.Position == POS_HIDDEN then
-		slideIn()
+
+	setCardContent(leftCard,  data.LeftText,  data.LeftColor,  data.LeftImage)
+	setCardContent(rightCard, data.RightText, data.RightColor, data.RightImage)
+	resetCardHighlight(leftCard,  Color3.fromRGB(60, 140, 255))
+	resetCardHighlight(rightCard, Color3.fromRGB(255, 90,  40))
+	leftCard.Visible  = true
+	rightCard.Visible = true
+
+	if vsBanner then
+		vsBanner.Text = (data.LeftText or "?") .. "  VS  " .. (data.RightText or "?")
 	end
-	if data.Duration then startTimer(data.Duration) end
+	slidePanel(true)
 end
 
-local function choiceHide()
+function Choice.Hide()
 	choiceEnabled = false
 	currentSide   = nil
-	stopTimer()
-	if choicePanel.Visible then slideOut() end
-	miniPanel.Visible = false
+	slidePanel(false)
 end
 
 -- ══════════════════════════════════════════════════════════════
---  CONTROLLERS (только те что нужны)
+--  COMBAT
 -- ══════════════════════════════════════════════════════════════
-local Controllers = script.Parent:WaitForChild("Controllers")
-local CombatController      = require(Controllers:WaitForChild("CombatController"))
-local CelebrationController = require(Controllers:WaitForChild("CelebrationController"))
+local combatActive = false
+local lastAttack   = 0
+local lastDash     = 0
+local lastBlock    = 0
 
-CombatController.Init()
-CelebrationController.Init()
+local function findClosestEnemy()
+	local char = localPlayer.Character
+	if not char then return nil end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return nil end
+	local bestDist, bestPlayer = CombatConfig.ATTACK_RANGE, nil
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p == localPlayer then continue end
+		local oc = p.Character
+		if not oc then continue end
+		local oh = oc:FindFirstChild("HumanoidRootPart")
+		if not oh then continue end
+		local d = (hrp.Position - oh.Position).Magnitude
+		if d < bestDist then bestDist = d; bestPlayer = p end
+	end
+	return bestPlayer
+end
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+	if gpe or not combatActive then return end
+	local now = tick()
+	if input.KeyCode == Enum.KeyCode.F
+		or input.UserInputType == Enum.UserInputType.MouseButton1 then
+		if now - lastAttack < CombatConfig.ATTACK_COOLDOWN then return end
+		lastAttack = now
+		local target = findClosestEnemy()
+		if target then
+			CombatInputRemote:FireServer({
+				Action   = Enums.CombatAction.Melee,
+				TargetId = target.UserId,
+			})
+		end
+	elseif input.KeyCode == Enum.KeyCode.Q then
+		if now - lastDash < CombatConfig.DASH_COOLDOWN then return end
+		lastDash = now
+		CombatInputRemote:FireServer({ Action = Enums.CombatAction.Dash })
+	elseif input.KeyCode == Enum.KeyCode.E then
+		if now - lastBlock < CombatConfig.BLOCK_COOLDOWN then return end
+		lastBlock = now
+		CombatInputRemote:FireServer({ Action = Enums.CombatAction.Block })
+	end
+end)
+
+local function setCombatActive(val) combatActive = val end
+
+print("[CombatController] Initialized. Keys: F/Click=Attack, Q=Dash, E=Block")
 
 -- ══════════════════════════════════════════════════════════════
---  ROUND STATE LISTENER
+--  CELEBRATION
 -- ══════════════════════════════════════════════════════════════
-RoundState.OnClientEvent:Connect(function(data)
+local function playCelebAnim(animId)
+	if not animId or animId == 0 then return end
+	local char = localPlayer.Character
+	if not char then return end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum then return end
+	local anim = Instance.new("Animation")
+	anim.AnimationId = "rbxassetid://" .. tostring(animId)
+	local track = hum:LoadAnimation(anim)
+	if track then
+		track:Play()
+		task.delay(math.max(track.Length, 0.1) + 0.1, function()
+			if track.IsPlaying then track:Stop() end
+		end)
+	end
+end
+
+local function playCelebSound(sfxId)
+	if not sfxId or sfxId == 0 then return end
+	local char = localPlayer.Character
+	if not char then return end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+	local snd = Instance.new("Sound")
+	snd.SoundId = "rbxassetid://" .. tostring(sfxId)
+	snd.Volume  = 0.8
+	snd.Parent  = hrp
+	snd:Play()
+	snd.Ended:Connect(function() snd:Destroy() end)
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  REMOTE LISTENERS
+-- ══════════════════════════════════════════════════════════════
+
+RoundStateRemote.OnClientEvent:Connect(function(data)
+	if not data then return end
 	local phase = data.Phase
 
-	-- Только таймер боя
-	if data.Timer ~= nil and phase == nil then
-		setTimer(data.Timer)
-		return
-	end
-	-- Таймер голосования
-	if data.Timer ~= nil and phase == Enums.Phase.DarkChoice then
-		setTimer(data.Timer)
-		voteTimerLabel.Text = tostring(math.max(0, data.Timer))
-		miniTimer.Text      = tostring(math.max(0, data.Timer))
-		return
+	-- Только таймер
+	if data.Timer ~= nil and phase ~= nil then
+		HUD.SetTimer(data.Timer)
+		if phase == Enums.Phase.DarkChoice or
+		   phase == Enums.Phase.Battle     or
+		   phase == Enums.Phase.Intermission then
+			if data.Phase == phase and data.Data == nil then return end
+		end
 	end
 
 	if phase == Enums.Phase.Intermission then
-		setStatus("⏳ Ожидание игроков...", Color3.fromRGB(180,180,180))
-		setTimer(nil)
-		hideResult()
-		choiceHide()
-		CombatController.SetActive(false)
+		HUD.SetStatus("Ожидание игроков...", Color3.fromRGB(180, 180, 200))
+		HUD.HideResult()
+		Choice.Hide()
+		setCombatActive(false)
 
 	elseif phase == Enums.Phase.TeleportToPreArena then
-		setStatus("🚀 Телепортация на арену...", Color3.fromRGB(100,200,255))
-		choiceHide()
+		HUD.SetStatus("На арену!", Color3.fromRGB(100, 200, 255))
+		HUD.SetTimer(nil)
+		Choice.Hide()
 
 	elseif phase == Enums.Phase.RevealChoiceA then
-		setStatus("👁 Выбор А...", Color3.fromRGB(180,180,255))
-		if data.Data then choiceRevealA(data.Data.Text, data.Data.Color) end
+		HUD.SetStatus("Вариант A:", Color3.fromRGB(160, 200, 255))
+		local d = data.Data
+		if d then Choice.RevealA(d.Text, d.Color, d.Image) end
 
 	elseif phase == Enums.Phase.RevealChoiceB then
-		setStatus("👁 Выбор Б...", Color3.fromRGB(180,255,180))
-		if data.Data then choiceRevealB(data.Data.Text, data.Data.Color) end
+		HUD.SetStatus("Вариант B:", Color3.fromRGB(255, 180, 140))
+		local d = data.Data
+		if d then Choice.RevealB(d.Text, d.Color, d.Image) end
 
 	elseif phase == Enums.Phase.DarkChoice then
-		setStatus("🗳 Выбери сторону!", Color3.fromRGB(255,255,100))
-		if data.Data then
-			choiceShowFull(data.Data)
-			setTimer(data.Data.Duration)
+		HUD.SetStatus("Выбери сторону!", Color3.fromRGB(255, 230, 80))
+		local d = data.Data
+		if d then
+			Choice.ShowFull(d)
+			HUD.SetTimer(d.Duration)
 		end
 
 	elseif phase == Enums.Phase.LockChoice then
-		setStatus("🔒 Выборы зафиксированы!", Color3.fromRGB(200,200,200))
-		setTimer(nil)
-		stopTimer()
+		HUD.SetStatus("Выбор зафиксирован!", Color3.fromRGB(180, 255, 180))
+		HUD.SetTimer(nil)
 
 	elseif phase == Enums.Phase.AssignTeams then
-		setStatus("⚔ Формируем команды...", Color3.fromRGB(100,255,100))
-		choiceHide()
+		HUD.SetStatus("Команды формируются...", Color3.fromRGB(140, 255, 160))
+		Choice.Hide()
 
 	elseif phase == Enums.Phase.TeleportToBattle then
-		setStatus("🏟 На арену!", Color3.fromRGB(255,150,0))
+		HUD.SetStatus("На позиции!", Color3.fromRGB(255, 160, 60))
 
 	elseif phase == Enums.Phase.Battle then
-		CombatController.SetActive(true)
-		setStatus("⚔ БОЙ!", Color3.fromRGB(255,50,50))
-		if data.Data and data.Data.Duration then setTimer(data.Data.Duration) end
+		setCombatActive(true)
+		HUD.SetStatus("БОЙ!", Color3.fromRGB(255, 70, 70))
+		local d = data.Data
+		if d and d.Duration then HUD.SetTimer(d.Duration) end
 
 	elseif phase == Enums.Phase.Victory then
-		CombatController.SetActive(false)
-		setTimer(nil)
-		if data.Data then
-			local w = data.Data.Winner
-			showBanner(
-				w == "Draw" and "🤝 Ничья!" or ("🏆 Победила команда " .. w .. "!"),
-				w == "Draw" and Color3.fromRGB(200,200,200) or Color3.fromRGB(255,220,0)
-			)
+		setCombatActive(false)
+		HUD.SetTimer(nil)
+		local d = data.Data
+		if d and d.Winner then
+			local txt = d.Winner == "Draw"
+				and "НИЧЬЯ!"
+				or "Победила команда " .. d.Winner .. "!"
+			HUD.ShowBanner(txt, Color3.fromRGB(255, 215, 50))
 		end
 
 	elseif phase == Enums.Phase.Celebration then
-		setStatus("🎉 Празднование!", Color3.fromRGB(255,220,0))
+		HUD.SetStatus("Победа!", Color3.fromRGB(255, 215, 50))
 
 	elseif phase == Enums.Phase.ReturnToLobby then
-		setStatus("🏠 Возвращение в лобби...", Color3.fromRGB(150,150,255))
-		setTimer(nil)
+		HUD.SetStatus("Возвращаемся...", Color3.fromRGB(160, 160, 255))
+		HUD.SetTimer(nil)
 
 	elseif phase == Enums.Phase.Cleanup then
-		setStatus("Раунд завершён.", Color3.fromRGB(160,160,160))
-		choiceHide()
-		CombatController.SetActive(false)
+		HUD.SetStatus("Раунд завершён.", Color3.fromRGB(160, 160, 180))
+		Choice.Hide()
+		setCombatActive(false)
 	end
 end)
 
-HUDMessage.OnClientEvent:Connect(function(data)
+HUDMessageRemote.OnClientEvent:Connect(function(data)
 	if data and data.Message then
-		setStatus(data.Message, data.Color)
+		HUD.SetStatus(data.Message, data.Color)
 	end
 end)
 
-RoundResult.OnClientEvent:Connect(function(data)
-	showResult(data.IsWinner, data.IsDraw)
+RoundResultRemote.OnClientEvent:Connect(function(data)
+	if data then HUD.ShowResult(data.IsWinner, data.IsDraw) end
 end)
 
-PlayCelebration.OnClientEvent:Connect(function(data)
-	CelebrationController.PlayCelebration(data.AnimId)
-	CelebrationController.PlaySound(data.SfxId)
+PlayCelebRemote.OnClientEvent:Connect(function(data)
+	if data then
+		playCelebAnim(data.AnimId)
+		playCelebSound(data.SfxId)
+	end
 end)
+
+-- SyncDarkness теперь ничего не делает (затемнение убрано)
+SyncDarkRemote.OnClientEvent:Connect(function(_) end)
 
 print("[ClientBootstrap] Готов,", localPlayer.Name)

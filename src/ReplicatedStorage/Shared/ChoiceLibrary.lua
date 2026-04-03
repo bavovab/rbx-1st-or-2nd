@@ -1,97 +1,116 @@
--- ModuleScript
--- Выбирает две случайные независимые опции из ContentConfig.OPTIONS.
--- Гарантирует что обе опции разные и не повторяют недавние пары.
+-- ModuleScript: ReplicatedStorage/Shared/ChoiceLibrary
+-- Каждый раунд выбирает 2 случайных РАЗНЫХ варианта из CHOICES.
+-- Избегает повторения пар из недавней истории.
 
-local ContentConfig = require(script.Parent.Parent.Config.ContentConfig)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ContentConfig = require(
+	ReplicatedStorage:WaitForChild("Config"):WaitForChild("ContentConfig")
+)
 
 local ChoiceLibrary = {}
 
--- История: хранит Id опций использованных недавно (обе стороны)
-local recentIds = {}
+-- История последних пар (список из {IdA, IdB})
+local recentPairs = {}
 
-local function weightedPick(pool)
-	local total = 0
-	for _, item in ipairs(pool) do
-		total = total + (item.Weight or 1)
-	end
-	local roll = math.random() * total
-	local cumulative = 0
-	for _, item in ipairs(pool) do
-		cumulative = cumulative + (item.Weight or 1)
-		if roll <= cumulative then
-			return item
+-- Строим пул разрешённых вариантов
+local function buildPool()
+	local pool = {}
+	for _, entry in ipairs(ContentConfig.CHOICES) do
+		if entry.Allowed then
+			table.insert(pool, entry)
 		end
 	end
-	return pool[#pool]
+	if #pool < 2 then
+		warn("[ChoiceLibrary] Нужно минимум 2 варианта с Allowed=true!")
+	end
+	return pool
 end
 
-local function wasRecent(id)
-	for _, rid in ipairs(recentIds) do
-		if rid == id then return true end
+-- Взвешенный случайный выбор из списка, исключая один ID
+local function weightedPick(pool, excludeId)
+	local filtered = {}
+	for _, item in ipairs(pool) do
+		if item.Id ~= excludeId then
+			table.insert(filtered, item)
+		end
+	end
+	if #filtered == 0 then return nil end
+
+	local total = 0
+	for _, item in ipairs(filtered) do
+		total = total + (item.Weight or 1)
+	end
+
+	local roll       = math.random() * total
+	local cumulative = 0
+	local chosen     = filtered[#filtered]
+	for _, item in ipairs(filtered) do
+		cumulative = cumulative + (item.Weight or 1)
+		if roll <= cumulative then
+			chosen = item
+			break
+		end
+	end
+	return chosen
+end
+
+-- Проверяем была ли пара недавно (в любом порядке)
+local function wasRecentPair(idA, idB)
+	for _, p in ipairs(recentPairs) do
+		if (p[1] == idA and p[2] == idB) or
+		   (p[1] == idB and p[2] == idA) then
+			return true
+		end
 	end
 	return false
 end
 
--- Возвращает таблицу { Left = option, Right = option }
--- Обе опции случайные и независимые друг от друга
+-- Возвращает { Left = entry, Right = entry }
 function ChoiceLibrary.GetRandomPair(maxHistory)
-	maxHistory = maxHistory or 4
+	maxHistory = maxHistory or 3
+	local pool = buildPool()
 
-	local allOptions = ContentConfig.OPTIONS
-
-	-- Сначала фильтруем недавно использованные
-	local freshPool = {}
-	for _, opt in ipairs(allOptions) do
-		if not wasRecent(opt.Id) then
-			table.insert(freshPool, opt)
-		end
+	-- Fallback если вариантов меньше 2
+	if #pool < 2 then
+		local fallbackA = {
+			Id = "Left", Text = "LEFT",
+			Color = Color3.fromRGB(0, 90, 200), Image = 0,
+		}
+		local fallbackB = {
+			Id = "Right", Text = "RIGHT",
+			Color = Color3.fromRGB(200, 60, 0), Image = 0,
+		}
+		return { Left = fallbackA, Right = fallbackB }
 	end
 
-	-- Если свежих меньше 2 — сбрасываем историю и берём все
-	if #freshPool < 2 then
-		recentIds = {}
-		freshPool = {}
-		for _, opt in ipairs(allOptions) do
-			table.insert(freshPool, opt)
-		end
+	-- Пробуем до 20 раз найти не-повторяющуюся пару
+	local chosenA, chosenB
+	local attempts = 0
+
+	repeat
+		attempts = attempts + 1
+		chosenA = weightedPick(pool, nil)
+		chosenB = weightedPick(pool, chosenA.Id)
+	until not wasRecentPair(chosenA.Id, chosenB.Id) or attempts >= 20
+
+	-- Запоминаем пару в историю
+	table.insert(recentPairs, { chosenA.Id, chosenB.Id })
+	if #recentPairs > maxHistory then
+		table.remove(recentPairs, 1)
 	end
 
-	-- Выбираем Left
-	local leftOpt = weightedPick(freshPool)
+	return { Left = chosenA, Right = chosenB }
+end
 
-	-- Убираем leftOpt из пула для выбора Right
-	local rightPool = {}
-	for _, opt in ipairs(freshPool) do
-		if opt.Id ~= leftOpt.Id then
-			table.insert(rightPool, opt)
-		end
+function ChoiceLibrary.GetById(id)
+	for _, entry in ipairs(ContentConfig.CHOICES) do
+		if entry.Id == id then return entry end
 	end
-
-	local rightOpt = weightedPick(rightPool)
-
-	-- Обновляем историю
-	table.insert(recentIds, leftOpt.Id)
-	table.insert(recentIds, rightOpt.Id)
-	while #recentIds > maxHistory * 2 do
-		table.remove(recentIds, 1)
-	end
-
-	return {
-		Left  = leftOpt,
-		Right = rightOpt,
-		-- удобные поля для обратной совместимости с RoundService
-		LeftText     = leftOpt.Text,
-		RightText    = rightOpt.Text,
-		LeftColor    = leftOpt.Color,
-		RightColor   = rightOpt.Color,
-		LeftImageId  = leftOpt.ImageId  or 0,
-		RightImageId = rightOpt.ImageId or 0,
-		RevealSfxKey = "RevealSting1",
-	}
+	return nil
 end
 
 function ChoiceLibrary.ResetHistory()
-	recentIds = {}
+	recentPairs = {}
 end
 
 return ChoiceLibrary
