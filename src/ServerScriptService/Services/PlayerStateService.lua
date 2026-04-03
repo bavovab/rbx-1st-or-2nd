@@ -51,7 +51,6 @@ function PlayerStateService.Init()
 		playerStates[player.UserId] = nil
 	end)
 
-	-- Init players already in server
 	for _, player in ipairs(Players:GetPlayers()) do
 		if not playerStates[player.UserId] then
 			playerStates[player.UserId] = defaultState()
@@ -99,12 +98,9 @@ function PlayerStateService.SavePosition(player)
 	local ps = playerStates[player.UserId]
 	if not ps then return end
 	local char = player.Character
-	if char then
-		local hrp = char:FindFirstChild("HumanoidRootPart")
-		if hrp then
-			ps.SavedCFrame = hrp.CFrame
-		end
-	end
+	if not char then return end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if hrp then ps.SavedCFrame = hrp.CFrame end
 end
 
 function PlayerStateService.GetSavedCFrame(player)
@@ -128,7 +124,14 @@ end
 
 function PlayerStateService.AddKill(player)
 	local ps = playerStates[player.UserId]
-	if ps then ps.Kills = ps.Kills + 1 end
+	if ps then
+		ps.Kills = ps.Kills + 1
+		local ls = player:FindFirstChild("leaderstats")
+		if ls then
+			local killsVal = ls:FindFirstChild("Kills")
+			if killsVal then killsVal.Value = killsVal.Value + 1 end
+		end
+	end
 end
 
 function PlayerStateService.AddDamage(player, amount)

@@ -3,8 +3,7 @@ local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService      = game:GetService("TweenService")
 
-local UIConfig  = require(ReplicatedStorage:WaitForChild("Config"):WaitForChild("UIConfig"))
-local Enums     = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Enums"))
+local Enums = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Enums"))
 
 local Remotes      = ReplicatedStorage:WaitForChild("Remotes")
 local SubmitChoice = Remotes:WaitForChild("SubmitChoice")
@@ -16,24 +15,68 @@ local gui, choicePanel, leftCard, rightCard
 local leftLabel, rightLabel, leftBtn, rightBtn, toggleBtn
 
 -- ── состояние ────────────────────────────────────────────
-local currentSide   = nil   -- выбранная сторона (сохраняется даже при скрытии)
-local choiceEnabled = false -- фаза DarkChoice активна
-local panelVisible  = true  -- визуальная видимость карточек (toggle)
+local currentSide   = nil
+local choiceEnabled = false
+local panelVisible  = true
 
--- ── тween-хелпер ─────────────────────────────────────────
+-- ── tween-хелпер ─────────────────────────────────────────
 local function tw(inst, props, t, style, dir)
+	if not inst or not inst.Parent then return end
 	TweenService:Create(
 		inst,
-		TweenInfo.new(t, style or Enum.EasingStyle.Quart, dir or Enum.EasingDirection.Out),
+		TweenInfo.new(t or 0.25,
+			style or Enum.EasingStyle.Quart,
+			dir   or Enum.EasingDirection.Out),
 		props
 	):Play()
+end
+
+-- ── make-хелпер ──────────────────────────────────────────
+local function make(class, props, parent)
+	local inst = Instance.new(class)
+	for k, v in pairs(props) do
+		pcall(function() inst[k] = v end)
+	end
+	if parent then inst.Parent = parent end
+	return inst
+end
+
+-- ── создать / найти кнопку скрыть ────────────────────────
+local function ensureToggleBtn(mainHUD)
+	-- сначала попробуем найти существующую
+	local btn = mainHUD:FindFirstChild("ToggleChoiceBtn")
+	if btn then return btn end
+
+	-- создаём сами
+	btn = make("TextButton", {
+		Name             = "ToggleChoiceBtn",
+		Size             = UDim2.new(0, 120, 0, 30),
+		Position         = UDim2.new(1, -128, 1, -236),
+		AnchorPoint      = Vector2.new(0, 0),
+		BackgroundColor3 = Color3.fromRGB(20, 20, 35),
+		BackgroundTransparency = 0.25,
+		TextColor3       = Color3.fromRGB(200, 200, 255),
+		Font             = Enum.Font.GothamSemibold,
+		Text             = "👁 Скрыть",
+		TextScaled       = true,
+		Visible          = false,
+		ZIndex           = 12,
+		BorderSizePixel  = 0,
+	}, mainHUD)
+	make("UICorner", { CornerRadius = UDim.new(0, 8) }, btn)
+	make("UIStroke", {
+		Color        = Color3.fromRGB(120, 100, 255),
+		Thickness    = 1.5,
+		Transparency = 0.4,
+	}, btn)
+	return btn
 end
 
 -- ── обновить рамки по текущему выбору ────────────────────
 local function refreshBorders()
 	if not leftCard or not rightCard then return end
-	local ls = leftCard:FindFirstChild("Border")
-	local rs = rightCard:FindFirstChild("Border")
+	local ls = leftCard:FindFirstChildOfClass("UIStroke")
+	local rs = rightCard:FindFirstChildOfClass("UIStroke")
 	if not ls or not rs then return end
 
 	if currentSide == Enums.Team.Left then
@@ -48,65 +91,73 @@ local function refreshBorders()
 	end
 end
 
--- ── скрыть / показать карточки (кнопка-тогл) ─────────────
--- ВАЖНО: choicePanel.Visible остаётся true —
---        это нужно, чтобы кнопки и логика выбора работали.
---        Мы просто делаем карточки прозрачными.
+-- ── применить видимость карточек ─────────────────────────
+-- choicePanel.Visible НЕ трогаем — кнопки должны работать
 local function applyPanelVisibility(visible, animate)
 	panelVisible = visible
 	local targetT = visible and 0 or 1
-	local dur     = animate and 0.25 or 0
+	local dur = animate and 0.25 or 0
 
-	local targets = { leftCard, rightCard }
-	for _, card in ipairs(targets) do
-		if card then
-			if animate then
-				tw(card, { BackgroundTransparency = targetT }, dur)
-				-- дочерние элементы
-				for _, child in ipairs(card:GetDescendants()) do
-					if child:IsA("TextLabel") or child:IsA("TextButton") then
-						tw(child, { TextTransparency       = targetT }, dur)
-						tw(child, { BackgroundTransparency = child:IsA("TextButton") and targetT or 1 }, dur)
-					elseif child:IsA("ImageLabel") then
-						tw(child, { ImageTransparency = targetT }, dur)
-					elseif child:IsA("UIStroke") then
-						tw(child, { Transparency = targetT }, dur)
-					end
+	for _, card in ipairs({ leftCard, rightCard }) do
+		if not card then continue end
+		if animate then
+			tw(card, { BackgroundTransparency = targetT }, dur)
+		else
+			card.BackgroundTransparency = targetT
+		end
+		for _, child in ipairs(card:GetDescendants()) do
+			if child:IsA("TextLabel") then
+				if animate then
+					tw(child, { TextTransparency = targetT }, dur)
+				else
+					child.TextTransparency = targetT
 				end
-			else
-				card.BackgroundTransparency = targetT
-				for _, child in ipairs(card:GetDescendants()) do
-					if child:IsA("TextLabel") or child:IsA("TextButton") then
-						child.TextTransparency       = targetT
-						if child:IsA("TextButton") then
-							child.BackgroundTransparency = targetT
-						end
-					elseif child:IsA("ImageLabel") then
-						child.ImageTransparency = targetT
-					elseif child:IsA("UIStroke") then
-						child.Transparency = targetT
-					end
+			elseif child:IsA("TextButton") then
+				if animate then
+					tw(child, { TextTransparency = targetT, BackgroundTransparency = targetT }, dur)
+				else
+					child.TextTransparency       = targetT
+					child.BackgroundTransparency = targetT
+				end
+			elseif child:IsA("ImageLabel") then
+				if animate then
+					tw(child, { ImageTransparency = targetT }, dur)
+				else
+					child.ImageTransparency = targetT
+				end
+			elseif child:IsA("UIStroke") then
+				if animate then
+					tw(child, { Transparency = targetT }, dur)
+				else
+					child.Transparency = targetT
 				end
 			end
 		end
 	end
 
-	-- Обновляем текст кнопки-тогла
 	if toggleBtn then
 		toggleBtn.Text = visible and "👁 Скрыть" or "👁 Показать"
 	end
 end
 
--- ── инициализация ─────────────────────────────────────────
+-- ── waitForGui ────────────────────────────────────────────
 local function waitForGui()
 	local pg = Players.LocalPlayer:WaitForChild("PlayerGui")
-	gui = pg:WaitForChild("MainHUD", 15)
-	if not gui then warn("[ChoiceController] MainHUD не найден"); return end
+	-- ждём MainHUD до 20 секунд
+	gui = pg:WaitForChild("MainHUD", 20)
+	if not gui then
+		warn("[ChoiceController] MainHUD не найден за 20 сек!")
+		return false
+	end
 
-	choicePanel = gui:WaitForChild("ChoicePanel")
-	leftCard    = choicePanel:FindFirstChild("LeftCard")
-	rightCard   = choicePanel:FindFirstChild("RightCard")
-	toggleBtn   = gui:FindFirstChild("ToggleChoiceBtn")
+	choicePanel = gui:WaitForChild("ChoicePanel", 10)
+	if not choicePanel then
+		warn("[ChoiceController] ChoicePanel не найден!")
+		return false
+	end
+
+	leftCard  = choicePanel:FindFirstChild("LeftCard")
+	rightCard = choicePanel:FindFirstChild("RightCard")
 
 	if leftCard then
 		leftLabel = leftCard:FindFirstChild("Label")
@@ -116,12 +167,22 @@ local function waitForGui()
 		rightLabel = rightCard:FindFirstChild("Label")
 		rightBtn   = rightCard:FindFirstChild("Button")
 	end
+
+	-- создаём/находим кнопку скрыть
+	toggleBtn = ensureToggleBtn(gui)
+
+	return true
 end
 
-function ChoiceController.Init()
-	waitForGui()
+-- ══════════════════════════════════════════════════════════
+-- PUBLIC API
+-- ══════════════════════════════════════════════════════════
 
-	-- Кнопка Выбрать Левую
+function ChoiceController.Init()
+	local ok = waitForGui()
+	if not ok then return end
+
+	-- Кнопка «Выбрать» — левая
 	if leftBtn then
 		leftBtn.MouseButton1Click:Connect(function()
 			if not choiceEnabled then return end
@@ -138,7 +199,7 @@ function ChoiceController.Init()
 		end)
 	end
 
-	-- Кнопка Выбрать Правую
+	-- Кнопка «Выбрать» — правая
 	if rightBtn then
 		rightBtn.MouseButton1Click:Connect(function()
 			if not choiceEnabled then return end
@@ -155,7 +216,7 @@ function ChoiceController.Init()
 		end)
 	end
 
-	-- Кнопка Скрыть/Показать
+	-- Кнопка «Скрыть / Показать»
 	if toggleBtn then
 		toggleBtn.MouseButton1Click:Connect(function()
 			applyPanelVisibility(not panelVisible, true)
@@ -169,7 +230,6 @@ function ChoiceController.Init()
 	end
 end
 
--- ── RevealChoiceA: показываем только левую карточку ───────
 function ChoiceController.RevealChoiceA(text, color)
 	if not choicePanel then return end
 	choicePanel.Visible = true
@@ -178,15 +238,15 @@ function ChoiceController.RevealChoiceA(text, color)
 
 	if toggleBtn then toggleBtn.Visible = false end
 
+	applyPanelVisibility(true, false)
+
 	if leftCard then
-		leftCard.Visible = true
-		applyPanelVisibility(true, false)  -- сбросить прозрачности
-		if leftLabel then leftLabel.Text = text end
-		-- анимация появления левой карточки
+		leftCard.Visible  = true
 		leftCard.Position = UDim2.new(-0.55, 0, 0, 0)
 		leftCard.BackgroundTransparency = 0.6
+		if leftLabel then leftLabel.Text = text end
 		tw(leftCard, {
-			Position             = UDim2.new(0, 0, 0, 0),
+			Position               = UDim2.new(0, 0, 0, 0),
 			BackgroundTransparency = 0,
 		}, 0.4, Enum.EasingStyle.Back)
 	end
@@ -195,22 +255,19 @@ function ChoiceController.RevealChoiceA(text, color)
 	end
 end
 
--- ── RevealChoiceB: показываем правую карточку ─────────────
 function ChoiceController.RevealChoiceB(text, color)
 	if not rightCard then return end
 	rightCard.Visible = true
 	if rightLabel then rightLabel.Text = text end
 
-	-- анимация появления правой карточки
 	rightCard.Position = UDim2.new(1.08, 0, 0, 0)
 	rightCard.BackgroundTransparency = 0.6
 	tw(rightCard, {
-		Position             = UDim2.new(0.53, 0, 0, 0),
+		Position               = UDim2.new(0.53, 0, 0, 0),
 		BackgroundTransparency = 0,
 	}, 0.4, Enum.EasingStyle.Back)
 end
 
--- ── ShowFullChoices: фаза DarkChoice ──────────────────────
 function ChoiceController.ShowFullChoices(data)
 	if not choicePanel then return end
 	choicePanel.Visible = true
@@ -218,12 +275,11 @@ function ChoiceController.ShowFullChoices(data)
 	currentSide         = nil
 	panelVisible        = true
 
-	-- убедимся что карточки полностью видимы и сброшены
 	applyPanelVisibility(true, false)
 
 	if leftCard then
 		leftCard.Visible = true
-		if leftLabel then leftLabel.Text = data.LeftText or "Left"  end
+		if leftLabel then leftLabel.Text = data.LeftText or "Left" end
 	end
 	if rightCard then
 		rightCard.Visible = true
@@ -232,25 +288,29 @@ function ChoiceController.ShowFullChoices(data)
 
 	refreshBorders()
 
-	-- Показываем кнопку скрыть
+	-- Показываем кнопку скрыть с анимацией
 	if toggleBtn then
-		toggleBtn.Visible = true
 		toggleBtn.Text    = "👁 Скрыть"
+		toggleBtn.Visible = true
 		toggleBtn.BackgroundTransparency = 1
 		tw(toggleBtn, { BackgroundTransparency = 0.25 }, 0.3)
 	end
 end
 
--- ── HideChoices: конец фазы выбора ────────────────────────
 function ChoiceController.HideChoices()
 	if not choicePanel then return end
 
-	-- Анимированное скрытие
 	if leftCard and leftCard.Visible then
-		tw(leftCard,  { Position = UDim2.new(-0.55, 0, 0, 0), BackgroundTransparency = 1 }, 0.3)
+		tw(leftCard, {
+			Position               = UDim2.new(-0.55, 0, 0, 0),
+			BackgroundTransparency = 1,
+		}, 0.3)
 	end
 	if rightCard and rightCard.Visible then
-		tw(rightCard, { Position = UDim2.new(1.08, 0, 0, 0),  BackgroundTransparency = 1 }, 0.3)
+		tw(rightCard, {
+			Position               = UDim2.new(1.08, 0, 0, 0),
+			BackgroundTransparency = 1,
+		}, 0.3)
 	end
 
 	task.delay(0.35, function()
@@ -258,10 +318,14 @@ function ChoiceController.HideChoices()
 		choiceEnabled       = false
 		currentSide         = nil
 		panelVisible        = true
-
-		-- сброс позиций для следующего раза
-		if leftCard  then leftCard.Position  = UDim2.new(0, 0, 0, 0) end
-		if rightCard then rightCard.Position = UDim2.new(0.53, 0, 0, 0) end
+		if leftCard  then
+			leftCard.Position  = UDim2.new(0, 0, 0, 0)
+			leftCard.BackgroundTransparency = 0
+		end
+		if rightCard then
+			rightCard.Position = UDim2.new(0.53, 0, 0, 0)
+			rightCard.BackgroundTransparency = 0
+		end
 	end)
 
 	if toggleBtn then

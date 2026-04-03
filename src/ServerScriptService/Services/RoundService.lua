@@ -316,46 +316,41 @@ end
 
 -- ── BATTLE ─────────────────────────────────────────
 local function phaseBattle(allParticipants)
-	-- Инициализируем HP на сервере
+	local allStates = PlayerStateService.GetAllStates()
 	CombatService.InitializeHP(allParticipants)
 
-	-- Убираем темноту (если вдруг осталась)
-	SyncDarkness:FireAllClients({ Dark = false })
+	broadcastPhase(Enums.Phase.Battle, { Duration = GameConfig.BATTLE_TIME })
+	broadcastHUD("⚔️ БИТВА!", Color3.fromRGB(255,50,50))
 
-	broadcastPhase(Enums.Phase.Battle, {
-		Duration = GameConfig.BATTLE_TIME,
-	})
-	broadcastHUD("БОЙ!", Color3.fromRGB(255, 50, 50))
+	local startTime = os.clock()
+	local winner    = nil
 
-	local duration      = GameConfig.BATTLE_TIME
-	local checkInterval = 0.5
-	local elapsed       = 0
-	local winner        = nil
+	while true do
+		task.wait(0.5)
 
-	while elapsed < duration do
-		task.wait(checkInterval)
-		elapsed = elapsed + checkInterval
+		local elapsed   = os.clock() - startTime
+		local remaining = math.ceil(GameConfig.BATTLE_TIME - elapsed)
 
-		-- Проверка досрочной победы
+		-- Отправляем таймер БЕЗ поля Phase — клиент обновит только цифру
+		RoundState:FireAllClients({ Timer = remaining })
+
+		-- Проверяем победителя
 		local freshStates = PlayerStateService.GetAllStates()
 		local earlyWin    = CombatService.CheckWinCondition(freshStates)
 		if earlyWin ~= nil then
 			winner = earlyWin
-			print(string.format("[RoundService] Досрочная победа: %s (%.1f сек)", winner, elapsed))
 			break
 		end
 
-		-- Таймер клиентам каждую секунду
-		if math.floor(elapsed) ~= math.floor(elapsed - checkInterval) then
-			broadcastTimer(Enums.Phase.Battle, duration - elapsed)
+		if elapsed >= GameConfig.BATTLE_TIME then
+			break
 		end
 	end
 
-	-- Если досрочной победы не было — определяем победителя по статистике
+	-- Если досрочной победы не было — решаем по конфигу
 	if not winner then
 		local freshStates = PlayerStateService.GetAllStates()
 		winner = TeamService.ResolveWinner(freshStates, RoundConfig.WINNER_RESOLVE_ORDER)
-		print(string.format("[RoundService] Победитель по таймауту: %s", winner))
 	end
 
 	return winner
