@@ -1,129 +1,143 @@
-local Enums = require(game.ReplicatedStorage.Shared.Enums)
+-- ModuleScript
+local Players = game:GetService("Players")
+
 local PlayerStateService = {}
-local _state = {}
+
+local playerStates = {}
+
+local function defaultState()
+	return {
+		InRound      = false,
+		IsAlive      = false,
+		Team         = "None",
+		SelectedSide = nil,
+		HP           = 0,
+		Kills        = 0,
+		DamageDealt  = 0,
+		SavedCFrame  = nil,
+	}
+end
 
 local function createLeaderstats(player)
+	if player:FindFirstChild("leaderstats") then return end
+
 	local ls = Instance.new("Folder")
-	ls.Name = "leaderstats"
+	ls.Name   = "leaderstats"
 	ls.Parent = player
-	local w = Instance.new("IntValue")
-	w.Name = "Wins"
-	w.Parent = ls
-	local c = Instance.new("IntValue")
-	c.Name = "Coins"
-	c.Parent = ls
-	local k = Instance.new("IntValue")
-	k.Name = "Kills"
-	k.Parent = ls
+
+	local wins = Instance.new("IntValue")
+	wins.Name   = "Wins"
+	wins.Value  = 0
+	wins.Parent = ls
+
+	local kills = Instance.new("IntValue")
+	kills.Name   = "Kills"
+	kills.Value  = 0
+	kills.Parent = ls
+
+	local coins = Instance.new("IntValue")
+	coins.Name   = "Coins"
+	coins.Value  = 0
+	coins.Parent = ls
 end
 
-function PlayerStateService.OnPlayerAdded(player)
-	_state[player] = {
-		InRound = false,
-		IsAlive = false,
-		Team = Enums.Team.None,
-		ChosenSide = nil,
-		Kills = 0,
-		DamageDealt = 0,
-		Wins = 0,
-		Coins = 0,
-	}
-	createLeaderstats(player)
+function PlayerStateService.Init()
+	Players.PlayerAdded:Connect(function(player)
+		playerStates[player.UserId] = defaultState()
+		createLeaderstats(player)
+	end)
+
+	Players.PlayerRemoving:Connect(function(player)
+		playerStates[player.UserId] = nil
+	end)
+
+	-- Init players already in server
+	for _, player in ipairs(Players:GetPlayers()) do
+		if not playerStates[player.UserId] then
+			playerStates[player.UserId] = defaultState()
+			createLeaderstats(player)
+		end
+	end
+
+	print("[PlayerStateService] Initialized.")
 end
 
-function PlayerStateService.OnPlayerRemoving(player)
-	_state[player] = nil
+function PlayerStateService.GetState(player)
+	return playerStates[player.UserId]
 end
 
-function PlayerStateService.Get(player)
-	return _state[player]
+function PlayerStateService.GetAllStates()
+	return playerStates
 end
 
-function PlayerStateService.SetInRound(player, v)
-	if _state[player] then
-		_state[player].InRound = v
-		if not v then
-			_state[player].IsAlive = false
-			_state[player].Team = Enums.Team.None
-			_state[player].ChosenSide = nil
+function PlayerStateService.SetInRound(player, val)
+	local ps = playerStates[player.UserId]
+	if ps then ps.InRound = val end
+end
+
+function PlayerStateService.SetTeam(player, team)
+	local ps = playerStates[player.UserId]
+	if ps then ps.Team = team end
+end
+
+function PlayerStateService.SetSelectedSide(player, side)
+	local ps = playerStates[player.UserId]
+	if ps then ps.SelectedSide = side end
+end
+
+function PlayerStateService.SetAlive(player, val)
+	local ps = playerStates[player.UserId]
+	if ps then ps.IsAlive = val end
+end
+
+function PlayerStateService.SetHP(player, hp)
+	local ps = playerStates[player.UserId]
+	if ps then ps.HP = hp end
+end
+
+function PlayerStateService.SavePosition(player)
+	local ps = playerStates[player.UserId]
+	if not ps then return end
+	local char = player.Character
+	if char then
+		local hrp = char:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			ps.SavedCFrame = hrp.CFrame
 		end
 	end
 end
 
-function PlayerStateService.SetAlive(player, v)
-	if _state[player] then _state[player].IsAlive = v end
+function PlayerStateService.GetSavedCFrame(player)
+	local ps = playerStates[player.UserId]
+	if ps then return ps.SavedCFrame end
+	return nil
 end
 
-function PlayerStateService.SetTeam(player, team)
-	if _state[player] then _state[player].Team = team end
-end
-
-function PlayerStateService.SetChosenSide(player, side)
-	if _state[player] then _state[player].ChosenSide = side end
+function PlayerStateService.ResetForRound(player)
+	local ps = playerStates[player.UserId]
+	if ps then
+		ps.InRound      = false
+		ps.IsAlive      = false
+		ps.Team         = "None"
+		ps.SelectedSide = nil
+		ps.HP           = 0
+		ps.Kills        = 0
+		ps.DamageDealt  = 0
+	end
 end
 
 function PlayerStateService.AddKill(player)
-	if not _state[player] then return end
-	_state[player].Kills += 1
-	local ls = player:FindFirstChild("leaderstats")
-	if ls and ls:FindFirstChild("Kills") then
-		ls.Kills.Value = _state[player].Kills
-	end
+	local ps = playerStates[player.UserId]
+	if ps then ps.Kills = ps.Kills + 1 end
 end
 
 function PlayerStateService.AddDamage(player, amount)
-	if _state[player] then _state[player].DamageDealt += amount end
+	local ps = playerStates[player.UserId]
+	if ps then ps.DamageDealt = ps.DamageDealt + amount end
 end
 
-function PlayerStateService.AddWin(player)
-	if not _state[player] then return end
-	_state[player].Wins += 1
-	local ls = player:FindFirstChild("leaderstats")
-	if ls and ls:FindFirstChild("Wins") then
-		ls.Wins.Value = _state[player].Wins
-	end
-end
-
-function PlayerStateService.AddCoins(player, amount)
-	if not _state[player] then return end
-	_state[player].Coins += amount
-	local ls = player:FindFirstChild("leaderstats")
-	if ls and ls:FindFirstChild("Coins") then
-		ls.Coins.Value = _state[player].Coins
-	end
-end
-
-function PlayerStateService.GetAll()
-	local result = {}
-	for p in pairs(_state) do table.insert(result, p) end
-	return result
-end
-
-function PlayerStateService.GetInRound()
-	local result = {}
-	for p, s in pairs(_state) do
-		if s.InRound then table.insert(result, p) end
-	end
-	return result
-end
-
-function PlayerStateService.GetAliveInRound()
-	local result = {}
-	for p, s in pairs(_state) do
-		if s.InRound and s.IsAlive then table.insert(result, p) end
-	end
-	return result
-end
-
-function PlayerStateService.ResetRoundState()
-	for _, s in pairs(_state) do
-		s.InRound = false
-		s.IsAlive = false
-		s.Team = Enums.Team.None
-		s.ChosenSide = nil
-		s.Kills = 0
-		s.DamageDealt = 0
-	end
+function PlayerStateService.CreateLeaderstats(player)
+	createLeaderstats(player)
 end
 
 return PlayerStateService

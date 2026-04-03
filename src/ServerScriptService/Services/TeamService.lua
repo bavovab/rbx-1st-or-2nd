@@ -1,110 +1,105 @@
--- TeamService.lua
--- Assigns players to Left/Right teams and exposes team query functions.
-
-local Enums              = require(game.ReplicatedStorage.Shared.Enums)
-local GameConfig         = require(game.ReplicatedStorage.Config.GameConfig)
-local Utility            = require(game.ReplicatedStorage.Shared.Utility)
-local PlayerStateService = require(script.Parent.PlayerStateService)
-local TeleportSvc        = require(script.Parent.TeleportServiceLocal)
+-- ModuleScript
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Shared     = ReplicatedStorage:WaitForChild("Shared")
+local Config     = ReplicatedStorage:WaitForChild("Config")
+local Enums      = require(Shared:WaitForChild("Enums"))
+local GameConfig = require(Config:WaitForChild("GameConfig"))
 
 local TeamService = {}
 
--- _teams[Enums.Team.Left|Right] = { player, ... }
-local _teams = {
-	[Enums.Team.Left]  = {},
-	[Enums.Team.Right] = {},
-}
+local teamAssignments = { Left = {}, Right = {} }
 
 function TeamService.Reset()
-	_teams[Enums.Team.Left]  = {}
-	_teams[Enums.Team.Right] = {}
+	teamAssignments = { Left = {}, Right = {} }
 end
 
--- Build teams from player chosen sides, handle undecided players per config.
-function TeamService.AssignTeams(inRoundPlayers)
+function TeamService.AssignTeams(players, playerStates)
 	TeamService.Reset()
-
 	local undecided = {}
 
-	for _, player in ipairs(inRoundPlayers) do
-		local state = PlayerStateService.Get(player)
-		if state then
-			local side = state.ChosenSide
-			if side == Enums.Team.Left then
-				table.insert(_teams[Enums.Team.Left], player)
-				PlayerStateService.SetTeam(player, Enums.Team.Left)
-			elseif side == Enums.Team.Right then
-				table.insert(_teams[Enums.Team.Right], player)
-				PlayerStateService.SetTeam(player, Enums.Team.Right)
-			else
-				table.insert(undecided, player)
-			end
+	for _, player in ipairs(players) do
+		local ps = playerStates[player.UserId]
+		if not ps then continue end
+		local side = ps.SelectedSide
+		if side == Enums.Team.Left then
+			table.insert(teamAssignments.Left, player)
+		elseif side == Enums.Team.Right then
+			table.insert(teamAssignments.Right, player)
+		else
+			table.insert(undecided, player)
 		end
 	end
 
 	-- Handle undecided players
-	if GameConfig.AUTO_ASSIGN_UNDECIDED then
-		local mode = GameConfig.UNDECIDED_MODE
+	local mode = GameConfig.UNDECIDED_MODE or "RandomAssign"
+	if GameConfig.AUTO_ASSIGN_UNDECIDED and mode == "RandomAssign" then
 		for _, player in ipairs(undecided) do
-			if mode == Enums.UndecidedMode.Eliminate then
-				PlayerStateService.SetInRound(player, false)
-				TeleportSvc.ReturnPlayerToLobby(player)
-			elseif mode == Enums.UndecidedMode.Smaller then
-				local leftCount  = #_teams[Enums.Team.Left]
-				local rightCount = #_teams[Enums.Team.Right]
-				local side = (leftCount <= rightCount) and Enums.Team.Left or Enums.Team.Right
-				table.insert(_teams[side], player)
-				PlayerStateService.SetTeam(player, side)
+			if #teamAssignments.Left <= #teamAssignments.Right then
+				table.insert(teamAssignments.Left, player)
 			else
-				-- Random
-				local side = (math.random(1, 2) == 1) and Enums.Team.Left or Enums.Team.Right
-				table.insert(_teams[side], player)
-				PlayerStateService.SetTeam(player, side)
+				table.insert(teamAssignments.Right, player)
 			end
 		end
-	else
-		-- If not auto-assigning, undecided are removed from round
-		for _, player in ipairs(undecided) do
-			PlayerStateService.SetInRound(player, false)
-			TeleportSvc.ReturnPlayerToLobby(player)
-		end
 	end
+
+	return teamAssignments
+end
+
+function TeamService.GetTeams()
+	return teamAssignments
 end
 
 function TeamService.GetTeam(side)
-	return Utility.ShallowCopy(_teams[side] or {})
+	return teamAssignments[side] or {}
 end
 
-function TeamService.GetBothTeams()
-	return Utility.ShallowCopy(_teams[Enums.Team.Left]),
-	       Utility.ShallowCopy(_teams[Enums.Team.Right])
-end
-
-function TeamService.GetTeamOf(player)
-	for _, side in ipairs({Enums.Team.Left, Enums.Team.Right}) do
-		for _, p in ipairs(_teams[side]) do
-			if p == player then return side end
-		end
-	end
-	return Enums.Team.None
-end
-
-function TeamService.GetAliveCount(side)
+function TeamService.GetAliveCount(side, playerStates)
 	local count = 0
-	for _, player in ipairs(_teams[side]) do
-		local state = PlayerStateService.Get(player)
-		if state and state.IsAlive then
-			count = count + 1
-		end
+	for _, player in ipairs(teamAssignments[side] or {}) do
+		local ps = playerStates[player.UserId]
+		if ps and ps.IsAlive then count = count + 1 end
 	end
 	return count
 end
 
--- Remove player from whichever team they are on (e.g. on disconnect mid-round)
-function TeamService.RemovePlayer(player)
-	for _, side in ipairs({Enums.Team.Left, Enums.Team.Right}) do
-		Utility.RemoveValue(_teams[side], player)
+function TeamService.GetTotalHP(side, playerStates)
+	local total = 0
+	for _, player in ipairs(teamAssignments[side] or {}) do
+		local ps = playerStates[player.UserId]
+		if ps and ps.IsAlive then total = total + ps.HP end
 	end
+	return total
+end
+
+function TeamService.IsTeamWiped(side, playerStates)
+	return TeamService.GetAliveCount(side, playerStates) == 0
+end
+
+function TeamService.ResolveWinner(playerStates, resolveOrder)
+	local leftAlive  = TeamService.GetAliveCount("Left",  playerStates)
+	local rightAlive = TeamService.GetAliveCount("Right", playerStates)
+	local leftHP     = TeamService.GetTotalHP("Left",  playerStates)
+	local rightHP    = TeamService.GetTotalHP("Right", playerStates)
+
+	for _, method in ipairs(resolveOrder) do
+		if method == "AliveCount" then
+			if leftAlive > rightAlive then return "Left"
+			elseif rightAlive > leftAlive then return "Right" end
+		elseif method == "TotalHP" then
+			if leftHP > rightHP then return "Left"
+			elseif rightHP > leftHP then return "Right" end
+		elseif method == "Draw" then
+			return "Draw"
+		end
+	end
+	return "Draw"
+end
+
+function TeamService.GetAllParticipants()
+	local all = {}
+	for _, p in ipairs(teamAssignments.Left)  do table.insert(all, p) end
+	for _, p in ipairs(teamAssignments.Right) do table.insert(all, p) end
+	return all
 end
 
 return TeamService

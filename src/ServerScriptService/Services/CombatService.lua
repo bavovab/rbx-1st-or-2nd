@@ -1,224 +1,184 @@
-local Players        = game:GetService("Players")
-local Enums          = require(game.ReplicatedStorage.Shared.Enums)
-local CombatConfig   = require(game.ReplicatedStorage.Config.CombatConfig)
-local Utility        = require(game.ReplicatedStorage.Shared.Utility)
-local PlayerStateSvc = require(script.Parent.PlayerStateService)
-local TeamService    = require(script.Parent.TeamService)
+-- ModuleScript: ServerScriptService/Services/CombatService
 
-local RemotesFolder      = game.ReplicatedStorage:WaitForChild("Remotes")
-local RemotePlayerElim   = RemotesFolder:WaitForChild("PlayerEliminated")
-local RemoteHPUpdate     = RemotesFolder:WaitForChild("HPUpdate")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players           = game:GetService("Players")
+
+local Shared       = ReplicatedStorage:WaitForChild("Shared")
+local Config       = ReplicatedStorage:WaitForChild("Config")
+local Enums        = require(Shared:WaitForChild("Enums"))
+local CombatConfig = require(Config:WaitForChild("CombatConfig"))
+local Utility      = require(Shared:WaitForChild("Utility"))
 
 local CombatService = {}
 
-local _hp         = {}
-local _blockState = {}
-local _onEliminated = nil
-local _onWinner     = nil
+local playerStates
+local teamService
 
-function CombatService.SetEliminatedCallback(fn)
-	_onEliminated = fn
+local attackCooldowns = {}
+local dashCooldowns   = {}
+local blockCooldowns  = {}
+local blockActive     = {}
+local blockExpiry     = {}
+
+local onEliminatedCallbacks = {}
+
+function CombatService.Init(pss, ts)
+	playerStates = pss
+	teamService  = ts
 end
 
-function CombatService.SetWinnerCallback(fn)
-	_onWinner = fn
+function CombatService.OnPlayerEliminated(cb)
+	table.insert(onEliminatedCallbacks, cb)
 end
 
-function CombatService.InitializePlayers(players)
-	_hp         = {}
-	_blockState = {}
+local function fireEliminated(victim, attacker)
+	for _, cb in ipairs(onEliminatedCallbacks) do
+		pcall(cb, victim, attacker)
+	end
+end
+
+function CombatService.InitializeHP(players)
+	attackCooldowns = {}
+	dashCooldowns   = {}
+	blockCooldowns  = {}
+	blockActive     = {}
+	blockExpiry     = {}
+
+	local allStates = playerStates.GetAllStates()
 	for _, player in ipairs(players) do
-		_hp[player]         = CombatConfig.MAX_HP
-		_blockState[player] = { active = false, startTime = 0 }
-		local hum = Utility.GetHumanoid(player)
-		if hum then
-			hum.MaxHealth          = CombatConfig.MAX_HP
-			hum.Health             = CombatConfig.MAX_HP
-			hum.AutoRotate         = true
-			hum.BreakJointsOnDeath = false
+		local ps = allStates[player.UserId]
+		if ps then
+			ps.HP      = CombatConfig.MAX_HP
+			ps.IsAlive = true
 		end
 	end
 end
 
-function CombatService.GetHP(player)
-	return _hp[player] or 0
-end
+local function applyDamage(attacker, victim, damage)
+	local allStates = playerStates.GetAllStates()
+	local vs = allStates[victim.UserId]
+	if not vs or not vs.IsAlive then return end
 
-function CombatService.GetTotalHP(side)
-	local total = 0
-	local teamPlayers = TeamService.GetTeam(side)
-	for _, p in ipairs(teamPlayers) do
-		local state = PlayerStateSvc.Get(p)
-		if state and state.IsAlive then
-			total = total + (_hp[p] or 0)
-		end
+	local uid = victim.UserId
+	if blockActive[uid] and os.clock() < (blockExpiry[uid] or 0) then
+		damage = math.floor(damage * (1 - CombatConfig.BLOCK_REDUCTION))
 	end
-	return total
-end
 
-local function EliminatePlayer(player, killer)
-	if not PlayerStateSvc.Get(player) then return end
-	if not PlayerStateSvc.Get(player).IsAlive then return end
-	PlayerStateSvc.SetAlive(player, false)
-	_hp[player] = 0
-	local hum = Utility.GetHumanoid(player)
+	vs.HP = math.max(0, vs.HP - damage)
+	playerStates.AddDamage(attacker, damage)
+
+	local hum = Utility.GetHumanoid(victim)
 	if hum then
-		hum.Health = 0
+		hum.Health = math.max(0, hum.Health - damage)
 	end
-	RemotePlayerElim:FireAllClients(player.Name)
-	if killer and PlayerStateSvc.Get(killer) then
-		PlayerStateSvc.AddKill(killer)
-	end
-	if _onEliminated then
-		_onEliminated(player, killer)
+
+	if vs.HP <= 0 then
+		vs.IsAlive = false
+		blockActive[uid] = false
+		playerStates.AddKill(attacker)
+		if hum and hum.Health > 0 then hum.Health = 0 end
+		fireEliminated(victim, attacker)
 	end
 end
 
-local function ApplyDamage(attacker, target, rawDamage)
-	if not _hp[target] then return end
-	local damage = rawDamage
-	local bs = _blockState[target]
-	if bs and bs.active then
-		if (os.clock() - bs.startTime) > CombatConfig.BLOCK_DURATION then
-			bs.active = false
-		else
-			damage = damage * (1 - CombatConfig.BLOCK_REDUCTION)
-		end
+local function findEnemyTarget(attacker, targetId)
+	local allStates = playerStates.GetAllStates()
+	local as = allStates[attacker.UserId]
+	if not as then return nil end
+
+	local targetPlayer = Players:GetPlayerByUserId(targetId)
+	if not targetPlayer then return nil end
+
+	local ts2 = allStates[targetPlayer.UserId]
+	if not ts2 or not ts2.IsAlive then return nil end
+	if ts2.Team == as.Team then return nil end
+	if ts2.Team == Enums.Team.None then return nil end
+
+	local ahrp = Utility.GetHumanoidRootPart(attacker)
+	local thrp = Utility.GetHumanoidRootPart(targetPlayer)
+	if not ahrp or not thrp then return nil end
+
+	if (ahrp.Position - thrp.Position).Magnitude > CombatConfig.MAX_VALID_ATTACK_DIST then
+		return nil
 	end
-	damage = math.floor(damage)
-	_hp[target] = math.max(0, _hp[target] - damage)
-	PlayerStateSvc.AddDamage(attacker, damage)
-	local hum = Utility.GetHumanoid(target)
-	if hum and hum.Health > 0 then
-		hum.Health = _hp[target]
-	end
-	RemoteHPUpdate:FireClient(target, _hp[target], CombatConfig.MAX_HP)
-	if _hp[target] <= 0 then
-		EliminatePlayer(target, attacker)
-	end
+
+	return targetPlayer
 end
 
-local function FindEnemyTarget(attacker, enemySide)
-	local root = Utility.GetHumanoidRootPart(attacker)
-	if not root then return nil end
-	local attackerPos = root.Position
-	local bestDist    = math.huge
-	local bestTarget  = nil
-	local enemies     = TeamService.GetTeam(enemySide)
-	for _, enemy in ipairs(enemies) do
-		local state = PlayerStateSvc.Get(enemy)
-		if state and state.IsAlive then
-			local eroot = Utility.GetHumanoidRootPart(enemy)
-			if eroot then
-				local dist = (eroot.Position - attackerPos).Magnitude
-				if dist <= CombatConfig.ATTACK_RANGE and dist < bestDist then
-					bestDist   = dist
-					bestTarget = enemy
-				end
-			end
-		end
-	end
-	return bestTarget
-end
+function CombatService.ProcessAction(player, payload)
+	local action = payload.Action
+	local now    = os.clock()
+	local uid    = player.UserId
+	local allStates = playerStates.GetAllStates()
+	local ps = allStates[uid]
+	if not ps or not ps.IsAlive then return end
 
-local function FindEnemyById(attacker, enemySide, targetUserId)
-	local root = Utility.GetHumanoidRootPart(attacker)
-	if not root then return nil end
-	local attackerPos = root.Position
-	local enemies     = TeamService.GetTeam(enemySide)
-	for _, enemy in ipairs(enemies) do
-		if enemy.UserId == targetUserId then
-			local state = PlayerStateSvc.Get(enemy)
-			if state and state.IsAlive then
-				local eroot = Utility.GetHumanoidRootPart(enemy)
-				if eroot then
-					local dist = (eroot.Position - attackerPos).Magnitude
-					if dist <= CombatConfig.ATTACK_RANGE then
-						return enemy
-					end
-				end
-			end
-			break
-		end
-	end
-	return nil
-end
-
-function CombatService.ProcessInput(attacker, action, targetUserId)
-	local state = PlayerStateSvc.Get(attacker)
-	if not state or not state.IsAlive then return end
-
-	local attackerTeam = TeamService.GetTeamOf(attacker)
-	if attackerTeam == Enums.Team.None then return end
-	local enemySide = (attackerTeam == Enums.Team.Left) and Enums.Team.Right or Enums.Team.Left
-
-	if action == Enums.CombatAction.Attack then
-		local target
-		if targetUserId then
-			target = FindEnemyById(attacker, enemySide, targetUserId)
-		else
-			target = FindEnemyTarget(attacker, enemySide)
-		end
-		if target then
-			ApplyDamage(attacker, target, CombatConfig.ATTACK_DAMAGE)
-		end
+	if action == Enums.CombatAction.Melee then
+		if (attackCooldowns[uid] or 0) + CombatConfig.ATTACK_COOLDOWN > now then return end
+		attackCooldowns[uid] = now
+		local target = findEnemyTarget(player, payload.TargetId)
+		if target then applyDamage(player, target, CombatConfig.ATTACK_DAMAGE) end
 
 	elseif action == Enums.CombatAction.Dash then
-		local root = Utility.GetHumanoidRootPart(attacker)
-		if root then
-			local lookDir = root.CFrame.LookVector
-			root.CFrame   = root.CFrame + lookDir * CombatConfig.DASH_DISTANCE
+		if (dashCooldowns[uid] or 0) + CombatConfig.DASH_COOLDOWN > now then return end
+		dashCooldowns[uid] = now
+		local hrp = Utility.GetHumanoidRootPart(player)
+		if hrp then
+			local newCF = hrp.CFrame + hrp.CFrame.LookVector * CombatConfig.DASH_DISTANCE
+			local char  = player.Character
+			if char then char:PivotTo(newCF) end
 		end
 
 	elseif action == Enums.CombatAction.Block then
-		local bs = _blockState[attacker]
-		if bs then
-			bs.active    = true
-			bs.startTime = os.clock()
+		if (blockCooldowns[uid] or 0) + CombatConfig.BLOCK_COOLDOWN > now then return end
+		blockCooldowns[uid] = now + CombatConfig.BLOCK_DURATION
+		blockActive[uid]    = true
+		blockExpiry[uid]    = now + CombatConfig.BLOCK_DURATION
+		task.delay(CombatConfig.BLOCK_DURATION, function()
+			blockActive[uid] = false
+		end)
+	end
+end
+
+-- ── Win condition ──
+-- A team is "wiped" only if it had at least 1 player AND now has 0 alive.
+-- An empty team (never had players) does NOT count as wiped.
+function CombatService.CheckWinCondition(allPlayerStates)
+	local leftTotal,  leftAlive  = 0, 0
+	local rightTotal, rightAlive = 0, 0
+
+	for _, ps in pairs(allPlayerStates) do
+		if not ps.InRound then continue end
+		if ps.Team == Enums.Team.Left then
+			leftTotal = leftTotal + 1
+			if ps.IsAlive then leftAlive = leftAlive + 1 end
+		elseif ps.Team == Enums.Team.Right then
+			rightTotal = rightTotal + 1
+			if ps.IsAlive then rightAlive = rightAlive + 1 end
 		end
 	end
 
-	CombatService.CheckWinCondition()
+	-- Need at least one team with players to evaluate
+	if leftTotal == 0 and rightTotal == 0 then return nil end
+
+	local leftWiped  = leftTotal  > 0 and leftAlive  == 0
+	local rightWiped = rightTotal > 0 and rightAlive == 0
+
+	if leftWiped and rightWiped then return "Draw" end
+	if leftWiped  then return "Right" end
+	if rightWiped then return "Left"  end
+
+	return nil -- battle continues
 end
 
-function CombatService.CheckWinCondition()
-	local leftAlive  = TeamService.GetAliveCount(Enums.Team.Left)
-	local rightAlive = TeamService.GetAliveCount(Enums.Team.Right)
-
-	if leftAlive == 0 and rightAlive == 0 then
-		if _onWinner then _onWinner(nil, Enums.WinnerReason.Draw) end
-		return true
-	elseif leftAlive == 0 then
-		if _onWinner then _onWinner(Enums.Team.Right, Enums.WinnerReason.Wipeout) end
-		return true
-	elseif rightAlive == 0 then
-		if _onWinner then _onWinner(Enums.Team.Left, Enums.WinnerReason.Wipeout) end
-		return true
-	end
-	return false
-end
-
-function CombatService.ResolveByTimer()
-	local leftAlive  = TeamService.GetAliveCount(Enums.Team.Left)
-	local rightAlive = TeamService.GetAliveCount(Enums.Team.Right)
-	if leftAlive > rightAlive then
-		return Enums.Team.Left, Enums.WinnerReason.AliveCount
-	elseif rightAlive > leftAlive then
-		return Enums.Team.Right, Enums.WinnerReason.AliveCount
-	end
-	local leftHP  = CombatService.GetTotalHP(Enums.Team.Left)
-	local rightHP = CombatService.GetTotalHP(Enums.Team.Right)
-	if leftHP > rightHP then
-		return Enums.Team.Left, Enums.WinnerReason.TotalHP
-	elseif rightHP > leftHP then
-		return Enums.Team.Right, Enums.WinnerReason.TotalHP
-	end
-	return nil, Enums.WinnerReason.Draw
-end
-
-function CombatService.Cleanup()
-	_hp         = {}
-	_blockState = {}
+function CombatService.GetCooldownInfo(player)
+	local now = os.clock()
+	local uid = player.UserId
+	return {
+		AttackReady = (attackCooldowns[uid] or 0) + CombatConfig.ATTACK_COOLDOWN <= now,
+		DashReady   = (dashCooldowns[uid]   or 0) + CombatConfig.DASH_COOLDOWN   <= now,
+		BlockReady  = (blockCooldowns[uid]  or 0) + CombatConfig.BLOCK_COOLDOWN  <= now,
+	}
 end
 
 return CombatService

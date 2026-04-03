@@ -1,204 +1,332 @@
--- ChoiceController.lua
--- Displays the two choice cards and lets the player submit their side.
+-- ModuleScript
+-- Управляет панелью голосования: анимации въезда/выезда, выбор, свернуть/развернуть, таймер.
 
-local Players       = game:GetService("Players")
-local TweenService  = game:GetService("TweenService")
-local UserInputSvc  = game:GetService("UserInputService")
-local UIConfig      = require(game.ReplicatedStorage.Config.UIConfig)
-local Enums         = require(game.ReplicatedStorage.Shared.Enums)
-local Effects       = require(script.Parent.EffectsController)
+local Players           = game:GetService("Players")
+local TweenService      = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local LocalPlayer   = Players.LocalPlayer
-local PlayerGui     = LocalPlayer:WaitForChild("PlayerGui")
+local UIConfig   = require(ReplicatedStorage:WaitForChild("Config"):WaitForChild("UIConfig"))
+local Enums      = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Enums"))
 
-local Remotes       = game.ReplicatedStorage.Remotes
+local Remotes      = ReplicatedStorage:WaitForChild("Remotes")
+local SubmitChoice = Remotes:WaitForChild("SubmitChoice")
 
 local ChoiceController = {}
 
-local _gui
-local _leftCard
-local _rightCard
-local _leftLabel
-local _rightLabel
-local _selectedSide = nil
-local _choiceOpen   = false
+-- ── refs ──
+local playerGui, mainHUD
+local choicePanel, leftCard, rightCard
+local leftBtn, rightBtn, collapseBtn
+local voteTimerFrame, voteTimerLabel
+local miniPanel, miniLabel, miniTimer
+local leftBorder, rightBorder
 
-local CARD_SIZE_NORMAL   = UDim2.new(0.3, 0, 0.5, 0)
-local CARD_SIZE_SELECTED = UDim2.new(0.33, 0, 0.54, 0)
+local currentSide    = nil
+local choiceEnabled  = false
+local isCollapsed    = false
+local timerThread    = nil
 
-local function MakeChoiceGui()
-	if _gui then _gui:Destroy() end
+-- Позиции панели
+local POS_HIDDEN    = UDim2.new(0, 0, 1, 0)          -- за нижним краем
+local POS_VISIBLE   = UDim2.new(0, 0, 0.58, 0)       -- видима
 
-	_gui = Instance.new("ScreenGui")
-	_gui.Name           = "ChoiceGui"
-	_gui.ResetOnSpawn   = false
-	_gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	_gui.IgnoreGuiInset = false
-	_gui.Parent         = PlayerGui
+local TWEEN_IN  = TweenInfo.new(0.55, Enum.EasingStyle.Back,  Enum.EasingDirection.Out)
+local TWEEN_OUT = TweenInfo.new(0.35, Enum.EasingStyle.Quad,  Enum.EasingDirection.In)
+local TWEEN_SEL = TweenInfo.new(0.18, Enum.EasingStyle.Quad,  Enum.EasingDirection.Out)
+local TWEEN_TIM = TweenInfo.new(0.25, Enum.EasingStyle.Quad,  Enum.EasingDirection.Out)
 
-	-- Left card
-	_leftCard = Instance.new("TextButton")
-	_leftCard.Name               = "LeftCard"
-	_leftCard.Size               = CARD_SIZE_NORMAL
-	_leftCard.Position           = UDim2.new(0.08, 0, 0.22, 0)
-	_leftCard.BackgroundColor3   = UIConfig.LEFT_COLOR_DEFAULT
-	_leftCard.BackgroundTransparency = 0.2
-	_leftCard.BorderSizePixel    = 0
-	_leftCard.Text               = ""
-	_leftCard.Visible            = false
-	_leftCard.Parent             = _gui
+local COLOR_SELECTED   = Color3.fromRGB(255, 220, 0)
+local COLOR_UNSELECTED = Color3.fromRGB(80,  80,  80)
+local COLOR_DIM        = Color3.fromRGB(40,  40,  40)
 
-	local lCorner = Instance.new("UICorner")
-	lCorner.CornerRadius = UDim.new(0, 12)
-	lCorner.Parent = _leftCard
-
-	_leftLabel = Instance.new("TextLabel")
-	_leftLabel.Name               = "Label"
-	_leftLabel.Size               = UDim2.new(1, -16, 1, 0)
-	_leftLabel.Position           = UDim2.new(0, 8, 0, 0)
-	_leftLabel.BackgroundTransparency = 1
-	_leftLabel.Font               = UIConfig.BANNER_FONT
-	_leftLabel.TextSize           = 32
-	_leftLabel.TextColor3         = UIConfig.TEXT_PRIMARY
-	_leftLabel.TextStrokeTransparency = 0.5
-	_leftLabel.TextXAlignment     = Enum.TextXAlignment.Center
-	_leftLabel.TextWrapped        = true
-	_leftLabel.Text               = "???"
-	_leftLabel.Parent             = _leftCard
-
-	local leftHint = Instance.new("TextLabel")
-	leftHint.Name               = "Hint"
-	leftHint.Size               = UDim2.new(1, 0, 0, 28)
-	leftHint.Position           = UDim2.new(0, 0, 1, -32)
-	leftHint.BackgroundTransparency = 1
-	leftHint.Font               = UIConfig.BODY_FONT
-	leftHint.TextSize           = 16
-	leftHint.TextColor3         = UIConfig.TEXT_SECONDARY
-	leftHint.Text               = "Press [A] or click"
-	leftHint.Parent             = _leftCard
-
-	-- Right card
-	_rightCard = Instance.new("TextButton")
-	_rightCard.Name               = "RightCard"
-	_rightCard.Size               = CARD_SIZE_NORMAL
-	_rightCard.Position           = UDim2.new(0.62, 0, 0.22, 0)
-	_rightCard.BackgroundColor3   = UIConfig.RIGHT_COLOR_DEFAULT
-	_rightCard.BackgroundTransparency = 0.2
-	_rightCard.BorderSizePixel    = 0
-	_rightCard.Text               = ""
-	_rightCard.Visible            = false
-	_rightCard.Parent             = _gui
-
-	local rCorner = Instance.new("UICorner")
-	rCorner.CornerRadius = UDim.new(0, 12)
-	rCorner.Parent = _rightCard
-
-	_rightLabel = Instance.new("TextLabel")
-	_rightLabel.Name               = "Label"
-	_rightLabel.Size               = UDim2.new(1, -16, 1, 0)
-	_rightLabel.Position           = UDim2.new(0, 8, 0, 0)
-	_rightLabel.BackgroundTransparency = 1
-	_rightLabel.Font               = UIConfig.BANNER_FONT
-	_rightLabel.TextSize           = 32
-	_rightLabel.TextColor3         = UIConfig.TEXT_PRIMARY
-	_rightLabel.TextStrokeTransparency = 0.5
-	_rightLabel.TextXAlignment     = Enum.TextXAlignment.Center
-	_rightLabel.TextWrapped        = true
-	_rightLabel.Text               = "???"
-	_rightLabel.Parent             = _rightCard
-
-	local rightHint = Instance.new("TextLabel")
-	rightHint.Name               = "Hint"
-	rightHint.Size               = UDim2.new(1, 0, 0, 28)
-	rightHint.Position           = UDim2.new(0, 0, 1, -32)
-	rightHint.BackgroundTransparency = 1
-	rightHint.Font               = UIConfig.BODY_FONT
-	rightHint.TextSize           = 16
-	rightHint.TextColor3         = UIConfig.TEXT_SECONDARY
-	rightHint.Text               = "Press [D] or click"
-	rightHint.Parent             = _rightCard
-
-	-- Click handlers
-	_leftCard.Activated:Connect(function()
-		if _choiceOpen then
-			ChoiceController.SubmitChoice(Enums.Team.Left)
-		end
-	end)
-	_rightCard.Activated:Connect(function()
-		if _choiceOpen then
-			ChoiceController.SubmitChoice(Enums.Team.Right)
-		end
-	end)
+local function getRef()
+	playerGui  = Players.LocalPlayer:WaitForChild("PlayerGui")
+	mainHUD    = playerGui:WaitForChild("MainHUD")
+	choicePanel = mainHUD:WaitForChild("ChoicePanel")
+	leftCard    = choicePanel:WaitForChild("LeftCard")
+	rightCard   = choicePanel:WaitForChild("RightCard")
+	leftBtn     = leftCard:WaitForChild("Button")
+	rightBtn    = rightCard:WaitForChild("Button")
+	collapseBtn = choicePanel:WaitForChild("CollapseBtn")
+	voteTimerFrame = choicePanel:WaitForChild("VoteTimerFrame")
+	voteTimerLabel = voteTimerFrame:WaitForChild("VoteTimer")
+	miniPanel   = mainHUD:WaitForChild("MiniPanel")
+	miniLabel   = miniPanel:WaitForChild("MiniLabel")
+	miniTimer   = miniPanel:WaitForChild("MiniTimer")
+	leftBorder  = leftCard:FindFirstChildOfClass("UIStroke")
+	rightBorder = rightCard:FindFirstChildOfClass("UIStroke")
 end
 
-local function HighlightSide(side)
-	_selectedSide = side
+-- ── helpers ──
+local function setLeftText(text)
+	-- пытаемся разделить эмодзи и имя (первое слово — эмодзи)
+	local emoji, name = text:match("^(%S+)%s+(.+)$")
+	if emoji and name then
+		leftCard:FindFirstChild("Emoji").Text = emoji
+		leftCard:FindFirstChild("Label").Text = name
+	else
+		leftCard:FindFirstChild("Emoji").Text = ""
+		leftCard:FindFirstChild("Label").Text = text
+	end
+end
+
+local function setRightText(text)
+	local emoji, name = text:match("^(%S+)%s+(.+)$")
+	if emoji and name then
+		rightCard:FindFirstChild("Emoji").Text = emoji
+		rightCard:FindFirstChild("Label").Text = name
+	else
+		rightCard:FindFirstChild("Emoji").Text = ""
+		rightCard:FindFirstChild("Label").Text = text
+	end
+end
+
+local function highlightSide(side)
+	if not leftBorder or not rightBorder then return end
 	if side == Enums.Team.Left then
-		TweenService:Create(_leftCard,  TweenInfo.new(0.2), { Size = CARD_SIZE_SELECTED }):Play()
-		TweenService:Create(_rightCard, TweenInfo.new(0.2), { Size = CARD_SIZE_NORMAL }):Play()
-		TweenService:Create(_leftCard,  TweenInfo.new(0.2), { BackgroundTransparency = 0 }):Play()
-		TweenService:Create(_rightCard, TweenInfo.new(0.2), { BackgroundTransparency = 0.5 }):Play()
+		TweenService:Create(leftBorder,  TWEEN_SEL, { Color = COLOR_SELECTED,   Thickness = 5 }):Play()
+		TweenService:Create(rightBorder, TWEEN_SEL, { Color = COLOR_DIM,        Thickness = 2 }):Play()
+		TweenService:Create(rightCard, TWEEN_SEL, { BackgroundTransparency = 0.45 }):Play()
+		TweenService:Create(leftCard,  TWEEN_SEL, { BackgroundTransparency = 0.0  }):Play()
 	elseif side == Enums.Team.Right then
-		TweenService:Create(_rightCard, TweenInfo.new(0.2), { Size = CARD_SIZE_SELECTED }):Play()
-		TweenService:Create(_leftCard,  TweenInfo.new(0.2), { Size = CARD_SIZE_NORMAL }):Play()
-		TweenService:Create(_rightCard, TweenInfo.new(0.2), { BackgroundTransparency = 0 }):Play()
-		TweenService:Create(_leftCard,  TweenInfo.new(0.2), { BackgroundTransparency = 0.5 }):Play()
+		TweenService:Create(rightBorder, TWEEN_SEL, { Color = COLOR_SELECTED,   Thickness = 5 }):Play()
+		TweenService:Create(leftBorder,  TWEEN_SEL, { Color = COLOR_DIM,        Thickness = 2 }):Play()
+		TweenService:Create(leftCard,  TWEEN_SEL, { BackgroundTransparency = 0.45 }):Play()
+		TweenService:Create(rightCard, TWEEN_SEL, { BackgroundTransparency = 0.0  }):Play()
+	else
+		TweenService:Create(leftBorder,  TWEEN_SEL, { Color = COLOR_UNSELECTED, Thickness = 3 }):Play()
+		TweenService:Create(rightBorder, TWEEN_SEL, { Color = COLOR_UNSELECTED, Thickness = 3 }):Play()
+		TweenService:Create(leftCard,  TWEEN_SEL, { BackgroundTransparency = 0.05 }):Play()
+		TweenService:Create(rightCard, TWEEN_SEL, { BackgroundTransparency = 0.05 }):Play()
 	end
 end
 
-function ChoiceController.SubmitChoice(side)
-	if not _choiceOpen then return end
-	HighlightSide(side)
-	Remotes.SubmitChoice:FireServer(side)
-end
-
--- Show a card (Left or Right) being revealed
-function ChoiceController.RevealCard(side, data)
-	if not _gui then MakeChoiceGui() end
-	if side == "Left" then
-		_leftCard.BackgroundColor3 = data.Color or UIConfig.LEFT_COLOR_DEFAULT
-		_leftLabel.Text = data.Text or "???"
-		_leftCard.Visible = true
-		Effects.SlideIn(_leftCard, "Left", 0.4)
-	elseif side == "Right" then
-		_rightCard.BackgroundColor3 = data.Color or UIConfig.RIGHT_COLOR_DEFAULT
-		_rightLabel.Text = data.Text or "???"
-		_rightCard.Visible = true
-		Effects.SlideIn(_rightCard, "Right", 0.4)
+local function updateMiniLabel(side)
+	if side == Enums.Team.Left then
+		miniLabel.Text = "✅ " .. (leftCard:FindFirstChild("Label") and leftCard.Label.Text or "Левый")
+		miniLabel.TextColor3 = Color3.fromRGB(100, 180, 255)
+	elseif side == Enums.Team.Right then
+		miniLabel.Text = "✅ " .. (rightCard:FindFirstChild("Label") and rightCard.Label.Text or "Правый")
+		miniLabel.TextColor3 = Color3.fromRGB(255, 140, 80)
+	else
+		miniLabel.Text = "⏳ Не выбрано"
+		miniLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
 	end
 end
 
-function ChoiceController.OpenChoice()
-	_choiceOpen   = true
-	_selectedSide = nil
-	-- Reset card sizes
-	if _leftCard  then _leftCard.Size  = CARD_SIZE_NORMAL; _leftCard.BackgroundTransparency  = 0.2 end
-	if _rightCard then _rightCard.Size = CARD_SIZE_NORMAL; _rightCard.BackgroundTransparency = 0.2 end
+-- ── анимация въезда панели ──
+local function slideIn()
+	isCollapsed = false
+	choicePanel.Position = POS_HIDDEN
+	choicePanel.Visible  = true
+	miniPanel.Visible    = false
+	collapseBtn.Text     = "▼"
+	TweenService:Create(choicePanel, TWEEN_IN, { Position = POS_VISIBLE }):Play()
 end
 
-function ChoiceController.CloseChoice()
-	_choiceOpen = false
+-- ── анимация выезда панели ──
+local function slideOut(callback)
+	TweenService:Create(choicePanel, TWEEN_OUT, { Position = POS_HIDDEN }):Play()
+	task.delay(0.36, function()
+		choicePanel.Visible = false
+		if callback then callback() end
+	end)
 end
 
-function ChoiceController.HideCards()
-	_choiceOpen = false
-	if _leftCard  then _leftCard.Visible  = false end
-	if _rightCard then _rightCard.Visible = false end
-	_selectedSide = nil
+-- ── свернуть ──
+local function collapse()
+	if isCollapsed then return end
+	isCollapsed = true
+	collapseBtn.Text = "▲"
+	updateMiniLabel(currentSide)
+	TweenService:Create(choicePanel, TWEEN_OUT, { Position = POS_HIDDEN }):Play()
+	task.delay(0.2, function()
+		miniPanel.Visible = true
+		TweenService:Create(miniPanel, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+			{ Position = UDim2.new(0.5, -110, 1, -54) }):Play()
+	end)
 end
+
+-- ── развернуть ──
+local function expand()
+	if not isCollapsed then return end
+	isCollapsed = false
+	collapseBtn.Text = "▼"
+	miniPanel.Visible = false
+	choicePanel.Position = POS_HIDDEN
+	choicePanel.Visible  = true
+	TweenService:Create(choicePanel, TWEEN_IN, { Position = POS_VISIBLE }):Play()
+end
+
+-- ── таймер голосования ──
+local function startVoteTimer(seconds)
+	if timerThread then
+		task.cancel(timerThread)
+		timerThread = nil
+	end
+	voteTimerFrame.Visible = true
+	voteTimerLabel.Text    = tostring(seconds)
+	miniTimer.Text         = tostring(seconds)
+
+	timerThread = task.spawn(function()
+		for i = seconds, 0, -1 do
+			voteTimerLabel.Text = tostring(i)
+			miniTimer.Text      = tostring(i)
+			-- пульс при <= 5
+			if i <= 5 then
+				voteTimerLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+				miniTimer.TextColor3     = Color3.fromRGB(255, 80, 80)
+				TweenService:Create(voteTimerLabel,
+					TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ TextSize = 28 }):Play()
+				task.wait(0.12)
+				TweenService:Create(voteTimerLabel,
+					TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+					{ TextSize = 22 }):Play()
+			else
+				voteTimerLabel.TextColor3 = Color3.fromRGB(255, 255, 100)
+				miniTimer.TextColor3     = Color3.fromRGB(255, 255, 100)
+			end
+			if i > 0 then task.wait(1) end
+		end
+		voteTimerFrame.Visible = false
+	end)
+end
+
+local function stopVoteTimer()
+	if timerThread then
+		task.cancel(timerThread)
+		timerThread = nil
+	end
+	voteTimerFrame.Visible = false
+end
+
+-- ── выбор ──
+local function selectSide(side)
+	if not choiceEnabled then return end
+	currentSide = side
+	SubmitChoice:FireServer({ Side = side })
+	highlightSide(side)
+	updateMiniLabel(side)
+
+	-- анимация кнопки
+	local btn = (side == Enums.Team.Left) and leftBtn or rightBtn
+	local origSize = btn.Size
+	TweenService:Create(btn, TweenInfo.new(0.08, Enum.EasingStyle.Quad), { Size = origSize - UDim2.new(0.05, 0, 0.05, 0) }):Play()
+	task.delay(0.08, function()
+		TweenService:Create(btn, TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Size = origSize }):Play()
+	end)
+end
+
+-- ══════════════════════════════════════════
+--  PUBLIC API
+-- ══════════════════════════════════════════
 
 function ChoiceController.Init()
-	MakeChoiceGui()
+	getRef()
 
-	-- Keyboard input for choice
-	UserInputSvc.InputBegan:Connect(function(input, processed)
-		if processed or not _choiceOpen then return end
-		if input.KeyCode == Enum.KeyCode.A or input.KeyCode == Enum.KeyCode.Left then
-			ChoiceController.SubmitChoice(Enums.Team.Left)
-		elseif input.KeyCode == Enum.KeyCode.D or input.KeyCode == Enum.KeyCode.Right then
-			ChoiceController.SubmitChoice(Enums.Team.Right)
+	-- Кнопки выбора
+	leftBtn.MouseButton1Click:Connect(function()
+		selectSide(Enums.Team.Left)
+	end)
+	rightBtn.MouseButton1Click:Connect(function()
+		selectSide(Enums.Team.Right)
+	end)
+
+	-- Кнопка свернуть/развернуть
+	collapseBtn.MouseButton1Click:Connect(function()
+		if isCollapsed then expand() else collapse() end
+	end)
+
+	-- Клик по мини-панели разворачивает
+	miniPanel.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			expand()
 		end
 	end)
+
+	choicePanel.Visible = false
+	miniPanel.Visible   = false
+end
+
+-- Показать только левую карту (RevealA)
+function ChoiceController.RevealChoiceA(text, color)
+	setLeftText(text)
+	leftCard.BackgroundColor3 = color
+	leftCard:FindFirstChildOfClass("UIGradient"):Destroy()  -- убираем градиент для чистоты reveal
+	rightCard:FindFirstChild("Emoji").Text  = "?"
+	rightCard:FindFirstChild("Label").Text  = "???"
+	highlightSide(nil)
+	choiceEnabled = false
+	slideIn()
+	-- правую карту скрываем визуально (прозрачность)
+	rightCard.BackgroundTransparency = 0.75
+	rightBtn.BackgroundTransparency  = 0.85
+end
+
+-- Показать правую карту (RevealB)
+function ChoiceController.RevealChoiceB(text, color)
+	setRightText(text)
+	rightCard.BackgroundColor3       = color
+	rightCard.BackgroundTransparency = 0.05
+	rightBtn.BackgroundTransparency  = 0.1
+	-- маленькая анимация «появления»
+	rightCard.Size = UDim2.new(0.36, 0, 0.88, 0)
+	TweenService:Create(rightCard, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Size = UDim2.new(0.46, 0, 0.88, 0) }):Play()
+end
+
+-- Полная панель с таймером (DarkChoice)
+function ChoiceController.ShowFullChoices(data)
+	choiceEnabled = true
+	currentSide   = nil
+	isCollapsed   = false
+	collapseBtn.Text = "▼"
+
+	if data.LeftText  then setLeftText(data.LeftText)   end
+	if data.RightText then setRightText(data.RightText) end
+	if data.LeftColor  then leftCard.BackgroundColor3  = data.LeftColor  end
+	if data.RightColor then rightCard.BackgroundColor3 = data.RightColor end
+
+	leftCard.BackgroundTransparency  = 0.05
+	rightCard.BackgroundTransparency = 0.05
+	leftBtn.BackgroundTransparency   = 0.1
+	rightBtn.BackgroundTransparency  = 0.1
+	highlightSide(nil)
+
+	-- Убедимся что панель видна
+	if not choicePanel.Visible or choicePanel.Position == POS_HIDDEN then
+		slideIn()
+	end
+
+	if data.Duration then
+		startVoteTimer(data.Duration)
+	end
+
+	voteTimerFrame.Visible = data.Duration ~= nil
+	miniPanel.Visible      = false
+end
+
+function ChoiceController.HideChoices()
+	choiceEnabled = false
+	currentSide   = nil
+	stopVoteTimer()
+	if choicePanel.Visible then
+		slideOut()
+	end
+	miniPanel.Visible = false
+end
+
+-- Обновить таймер из сети (каждую секунду из RoundService)
+function ChoiceController.UpdateTimer(seconds)
+	if not voteTimerFrame then return end
+	voteTimerLabel.Text = tostring(math.max(0, seconds))
+	miniTimer.Text      = tostring(math.max(0, seconds))
+	if seconds <= 5 then
+		voteTimerLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+		miniTimer.TextColor3     = Color3.fromRGB(255, 80, 80)
+	end
 end
 
 return ChoiceController

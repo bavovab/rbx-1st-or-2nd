@@ -1,52 +1,50 @@
-local Players  = game:GetService("Players")
-local UIConfig = require(game.ReplicatedStorage.Config.UIConfig)
-local Enums    = require(game.ReplicatedStorage.Shared.Enums)
-
-local HUDController = require(script.Parent.HUDController)
-
-local LocalPlayer = Players.LocalPlayer
+-- ModuleScript
+local Players = game:GetService("Players")
 
 local CelebrationController = {}
 
-local _myTeam = nil
-
--- Called when TeamAssigned fires — store local player's team
-function CelebrationController.SetMyTeam(team)
-	_myTeam = team
-end
-
-function CelebrationController.OnVictoryAnnounced(winnerTeam, reason)
-	if _myTeam == nil then
-		HUDController.ShowResult("Round Over!", "Result: " .. tostring(winnerTeam), UIConfig.TEXT_PRIMARY)
-		return
-	end
-
-	if winnerTeam == _myTeam then
-		HUDController.ShowResult("VICTORY!", "Your team won! (" .. tostring(reason) .. ")", UIConfig.WIN_COLOR)
-	else
-		HUDController.ShowResult("DEFEAT", "Better luck next round.", UIConfig.LOSE_COLOR)
-	end
-end
-
-function CelebrationController.OnCelebrationStart(winnerTeam)
-	if winnerTeam == "Draw" then
-		HUDController.ShowResult("DRAW!", "Both teams fought well.", UIConfig.DRAW_COLOR)
-		return
-	end
-
-	if _myTeam == winnerTeam then
-		HUDController.ShowBanner("🎉 YOUR TEAM WINS!", UIConfig.WIN_COLOR, 0)
-	else
-		HUDController.ShowBanner("You lost this round.", UIConfig.LOSE_COLOR, 0)
-	end
-end
+local localPlayer = Players.LocalPlayer
 
 function CelebrationController.Init()
-	-- Hook TeamAssigned to track local player's team
-	local RemotesFolder  = game.ReplicatedStorage:WaitForChild("Remotes")
-	local RemoteTeamAssigned = RemotesFolder:WaitForChild("TeamAssigned")
-	RemoteTeamAssigned.OnClientEvent:Connect(function(teamName)
-		_myTeam = teamName
+	-- Не подписывается ни на какие ремоуты.
+	-- Реакции приходят через PlayCelebration в ClientBootstrap.
+end
+
+function CelebrationController.PlayCelebration(animId)
+	if not animId or animId == 0 then return end
+	local char = localPlayer.Character
+	if not char then return end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum then return end
+
+	local animInstance = Instance.new("Animation")
+	animInstance.AnimationId = "rbxassetid://" .. tostring(animId)
+
+	local ok, track = pcall(function()
+		return hum:LoadAnimation(animInstance)
+	end)
+	if ok and track then
+		track:Play()
+		task.delay(math.max(track.Length, 0.1) + 0.1, function()
+			if track.IsPlaying then track:Stop() end
+		end)
+	end
+end
+
+function CelebrationController.PlaySound(sfxId)
+	if not sfxId or sfxId == 0 then return end
+	local char = localPlayer.Character
+	if not char then return end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	local sound = Instance.new("Sound")
+	sound.SoundId = "rbxassetid://" .. tostring(sfxId)
+	sound.Volume  = 0.8
+	sound.Parent  = hrp
+	sound:Play()
+	sound.Ended:Connect(function()
+		sound:Destroy()
 	end)
 end
 

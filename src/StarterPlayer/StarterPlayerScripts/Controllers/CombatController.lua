@@ -1,165 +1,99 @@
-local Players      = game:GetService("Players")
-local UserInputSvc = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
+-- ModuleScript
+-- Client-side: captures input and sends CombatInput to server.
+-- Does NOT do damage, does NOT create buttons (buttons optional/HUD only).
 
-local CombatConfig = require(game.ReplicatedStorage.Config.CombatConfig)
-local Enums        = require(game.ReplicatedStorage.Shared.Enums)
-local UIConfig     = require(game.ReplicatedStorage.Config.UIConfig)
+local Players           = game:GetService("Players")
+local UserInputService  = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local LocalPlayer  = Players.LocalPlayer
-local PlayerGui    = LocalPlayer:WaitForChild("PlayerGui")
+local Enums        = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Enums"))
+local CombatConfig = require(ReplicatedStorage:WaitForChild("Config"):WaitForChild("CombatConfig"))
 
-local RemotesFolder = game.ReplicatedStorage:WaitForChild("Remotes")
-local RemoteCombat  = RemotesFolder:WaitForChild("CombatInput")
+local Remotes     = ReplicatedStorage:WaitForChild("Remotes", 15)
+local CombatInput = Remotes and Remotes:WaitForChild("CombatInput", 10)
 
 local CombatController = {}
 
-local _active         = false
-local _attackCooldown = false
-local _dashCooldown   = false
-local _blockCooldown  = false
+local localPlayer  = Players.LocalPlayer
+local combatActive = false
 
-local _gui
-local _attackBtn
-local _dashBtn
-local _blockBtn
+local lastAttack = 0
+local lastDash   = 0
+local lastBlock  = 0
 
-local function SetCooldownVisual(btn, duration)
-	if not btn then return end
-	btn.BackgroundTransparency = 0.6
-	task.delay(duration, function()
-		if btn then
-			btn.BackgroundTransparency = 0.1
+local function findClosestEnemy()
+	local char = localPlayer.Character
+	if not char then return nil end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return nil end
+
+	local best     = CombatConfig.ATTACK_RANGE
+	local bestPlayer = nil
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player == localPlayer then continue end
+		local oc = player.Character
+		if not oc then continue end
+		local oh = oc:FindFirstChild("HumanoidRootPart")
+		if not oh then continue end
+		local dist = (hrp.Position - oh.Position).Magnitude
+		if dist < best then
+			best       = dist
+			bestPlayer = player
 		end
-	end)
+	end
+
+	return bestPlayer
 end
 
-local function MakeBtn(name, text, pos, color)
-	local btn = Instance.new("TextButton")
-	btn.Name                 = name
-	btn.Size                 = UDim2.new(0, 80, 0, 80)
-	btn.Position             = pos
-	btn.AnchorPoint          = Vector2.new(0.5, 1)
-	btn.BackgroundColor3     = color
-	btn.BackgroundTransparency = 0.1
-	btn.BorderSizePixel      = 0
-	btn.Font                 = UIConfig.BANNER_FONT
-	btn.TextSize             = 14
-	btn.TextColor3           = UIConfig.TEXT_PRIMARY
-	btn.Text                 = text
-	btn.Visible              = false
-	btn.Parent               = _gui
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 10)
-	corner.Parent = btn
-	return btn
+local function sendMelee()
+	if not CombatInput then return end
+	local now = tick()
+	if now - lastAttack < CombatConfig.ATTACK_COOLDOWN then return end
+	lastAttack = now
+	local target = findClosestEnemy()
+	if not target then return end
+	CombatInput:FireServer({ Action = Enums.CombatAction.Melee, TargetId = target.UserId })
 end
 
-local function BuildCombatHUD()
-	if _gui then _gui:Destroy() end
+local function sendDash()
+	if not CombatInput then return end
+	local now = tick()
+	if now - lastDash < CombatConfig.DASH_COOLDOWN then return end
+	lastDash = now
+	CombatInput:FireServer({ Action = Enums.CombatAction.Dash })
+end
 
-	_gui = Instance.new("ScreenGui")
-	_gui.Name           = "CombatHUD"
-	_gui.ResetOnSpawn   = false
-	_gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	_gui.Parent         = PlayerGui
-
-	_attackBtn = MakeBtn("AttackBtn", "ATTACK\n[E]",
-		UDim2.new(0.5, -50, 1, -20),
-		Color3.fromRGB(200, 60, 60))
-
-	_dashBtn = MakeBtn("DashBtn", "DASH\n[Q]",
-		UDim2.new(0.5, -140, 1, -20),
-		Color3.fromRGB(60, 120, 200))
-
-	_blockBtn = MakeBtn("BlockBtn", "BLOCK\n[R]",
-		UDim2.new(0.5, 40, 1, -20),
-		Color3.fromRGB(60, 180, 60))
-
-	-- Button click handlers
-	_attackBtn.Activated:Connect(function()
-		if _active and not _attackCooldown then
-			_attackCooldown = true
-			SetCooldownVisual(_attackBtn, CombatConfig.ATTACK_COOLDOWN)
-			RemoteCombat:FireServer(Enums.CombatAction.Attack, nil)
-			task.delay(CombatConfig.ATTACK_COOLDOWN, function()
-				_attackCooldown = false
-			end)
-		end
-	end)
-
-	_dashBtn.Activated:Connect(function()
-		if _active and not _dashCooldown then
-			_dashCooldown = true
-			SetCooldownVisual(_dashBtn, CombatConfig.DASH_COOLDOWN)
-			RemoteCombat:FireServer(Enums.CombatAction.Dash, nil)
-			task.delay(CombatConfig.DASH_COOLDOWN, function()
-				_dashCooldown = false
-			end)
-		end
-	end)
-
-	_blockBtn.Activated:Connect(function()
-		if _active and not _blockCooldown then
-			_blockCooldown = true
-			SetCooldownVisual(_blockBtn, CombatConfig.BLOCK_COOLDOWN)
-			RemoteCombat:FireServer(Enums.CombatAction.Block, nil)
-			task.delay(CombatConfig.BLOCK_COOLDOWN, function()
-				_blockCooldown = false
-			end)
-		end
-	end)
+local function sendBlock()
+	if not CombatInput then return end
+	local now = tick()
+	if now - lastBlock < CombatConfig.BLOCK_COOLDOWN then return end
+	lastBlock = now
+	CombatInput:FireServer({ Action = Enums.CombatAction.Block })
 end
 
 function CombatController.SetActive(active)
-	_active = active
-	if _attackBtn then _attackBtn.Visible = active end
-	if _dashBtn   then _dashBtn.Visible   = active end
-	if _blockBtn  then _blockBtn.Visible  = active end
-	if not active then
-		_attackCooldown = false
-		_dashCooldown   = false
-		_blockCooldown  = false
-	end
+	combatActive = active
 end
 
 function CombatController.Init()
-	BuildCombatHUD()
+	if not CombatInput then
+		warn("[CombatController] CombatInput remote not found")
+	end
 
-	UserInputSvc.InputBegan:Connect(function(input, processed)
-		if processed or not _active then return end
-
-		if input.KeyCode == Enum.KeyCode.E then
-			if not _attackCooldown then
-				_attackCooldown = true
-				SetCooldownVisual(_attackBtn, CombatConfig.ATTACK_COOLDOWN)
-				RemoteCombat:FireServer(Enums.CombatAction.Attack, nil)
-				task.delay(CombatConfig.ATTACK_COOLDOWN, function()
-					_attackCooldown = false
-				end)
-			end
-
+	UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if gameProcessed or not combatActive then return end
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.KeyCode == Enum.KeyCode.F then
+			sendMelee()
 		elseif input.KeyCode == Enum.KeyCode.Q then
-			if not _dashCooldown then
-				_dashCooldown = true
-				SetCooldownVisual(_dashBtn, CombatConfig.DASH_COOLDOWN)
-				RemoteCombat:FireServer(Enums.CombatAction.Dash, nil)
-				task.delay(CombatConfig.DASH_COOLDOWN, function()
-					_dashCooldown = false
-				end)
-			end
-
-		elseif input.KeyCode == Enum.KeyCode.R then
-			if not _blockCooldown then
-				_blockCooldown = true
-				SetCooldownVisual(_blockBtn, CombatConfig.BLOCK_COOLDOWN)
-				RemoteCombat:FireServer(Enums.CombatAction.Block, nil)
-				task.delay(CombatConfig.BLOCK_COOLDOWN, function()
-					_blockCooldown = false
-				end)
-			end
+			sendDash()
+		elseif input.KeyCode == Enum.KeyCode.E then
+			sendBlock()
 		end
 	end)
+
+	print("[CombatController] Initialized. Keys: F/Click=Attack, Q=Dash, E=Block")
 end
 
 return CombatController

@@ -1,38 +1,45 @@
-local ContentConfig = require(game.ReplicatedStorage.Config.ContentConfig)
-local TeamService   = require(script.Parent.TeamService)
-local Enums         = require(game.ReplicatedStorage.Shared.Enums)
-
-local RemotesFolder      = game.ReplicatedStorage:WaitForChild("Remotes")
-local RemoteCelebration  = RemotesFolder:WaitForChild("CelebrationStart")
+-- ModuleScript
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ContentConfig     = require(ReplicatedStorage.Config.ContentConfig)
 
 local CelebrationService = {}
 
-function CelebrationService.PlayForWinners(winnerTeam, isDraw)
-	local winners = {}
-	if isDraw then
-		local left, right = TeamService.GetBothTeams()
-		for _, p in ipairs(left)  do table.insert(winners, p) end
-		for _, p in ipairs(right) do table.insert(winners, p) end
-	elseif winnerTeam then
-		winners = TeamService.GetTeam(winnerTeam)
+-- Use WaitForChild with timeout to avoid infinite yield
+local Remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
+
+local RoundResult     = Remotes and Remotes:WaitForChild("RoundResult",     10)
+local PlayCelebration = Remotes and Remotes:WaitForChild("PlayCelebration", 10)
+
+function CelebrationService.Announce(allPlayers, winnerSide, winnerPlayers, playerStates)
+	if not RoundResult or not PlayCelebration then
+		warn("[CelebrationService] Remotes not found, skipping announce.")
+		return
 	end
 
-	RemoteCelebration:FireAllClients(winnerTeam or "Draw")
+	local allStates = playerStates.GetAllStates()
 
-	for _, player in ipairs(winners) do
-		task.spawn(function()
-			local char = player.Character
-			if not char then return end
-			local hum = char:FindFirstChildOfClass("Humanoid")
-			if not hum then return end
-			local animId = ContentConfig.Animations.CelebrationWin
-			if animId and animId ~= 0 then
-				local anim = Instance.new("Animation")
-				anim.AnimationId = "rbxassetid://" .. tostring(animId)
-				local track = hum:LoadAnimation(anim)
-				track:Play()
-			end
-		end)
+	for _, player in ipairs(allPlayers) do
+		if not player or not player.Parent then continue end
+		local ps = allStates[player.UserId]
+		if not ps then continue end
+
+		local isWinner = (winnerSide ~= "Draw") and (ps.Team == winnerSide)
+		local isDraw   = (winnerSide == "Draw")
+
+		-- Send result UI to everyone
+		RoundResult:FireClient(player, {
+			IsWinner   = isWinner,
+			IsDraw     = isDraw,
+			WinnerSide = winnerSide,
+		})
+
+		-- Send celebration only to winners
+		if isWinner then
+			PlayCelebration:FireClient(player, {
+				AnimId = ContentConfig.ANIMATION_IDS.Celebrate1,
+				SfxId  = ContentConfig.SOUND_IDS.WinSting,
+			})
+		end
 	end
 end
 
