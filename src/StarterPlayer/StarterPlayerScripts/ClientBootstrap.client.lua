@@ -1,11 +1,11 @@
 -- LocalScript: StarterPlayer/StarterPlayerScripts/ClientBootstrap.client.lua
 -- Строит MainHUD, инициализирует все контроллеры, слушает ремоуты.
 
-local Players          = game:GetService("Players")
+local Players         = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService     = game:GetService("TweenService")
+local TweenService    = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
-local RunService       = game:GetService("RunService")
+local RunService      = game:GetService("RunService")
 
 local localPlayer = Players.LocalPlayer
 local playerGui   = localPlayer:WaitForChild("PlayerGui")
@@ -16,13 +16,13 @@ local playerGui   = localPlayer:WaitForChild("PlayerGui")
 local Remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
 assert(Remotes, "[ClientBootstrap] Remotes не найдены!")
 
-local RoundStateRemote   = Remotes:WaitForChild("RoundState")
-local HUDMessageRemote   = Remotes:WaitForChild("HUDMessage")
-local RoundResultRemote  = Remotes:WaitForChild("RoundResult")
-local PlayCelebRemote    = Remotes:WaitForChild("PlayCelebration")
-local SyncDarkRemote     = Remotes:WaitForChild("SyncDarkness")
+local RoundStateRemote  = Remotes:WaitForChild("RoundState")
+local HUDMessageRemote  = Remotes:WaitForChild("HUDMessage")
+local RoundResultRemote = Remotes:WaitForChild("RoundResult")
+local PlayCelebRemote   = Remotes:WaitForChild("PlayCelebration")
+local SyncDarkRemote    = Remotes:WaitForChild("SyncDarkness")
 local SubmitChoiceRemote = Remotes:WaitForChild("SubmitChoice")
-local CombatInputRemote  = Remotes:WaitForChild("CombatInput")
+local CombatInputRemote = Remotes:WaitForChild("CombatInput")
 
 -- ══════════════════════════════════════════════════════════
 -- КОНФИГИ
@@ -50,6 +50,15 @@ local function tw(inst, props, t, style, dir)
 			style or Enum.EasingStyle.Quart,
 			dir   or Enum.EasingDirection.Out),
 		props):Play()
+end
+
+-- Конвертирует Image из ContentConfig в строку для ImageLabel.
+-- Если id = 0 или nil — ставит PLACEHOLDER.
+local function resolveImage(id)
+	if id and id ~= 0 then
+		return "rbxassetid://" .. tostring(id)
+	end
+	return PLACEHOLDER
 end
 
 -- ══════════════════════════════════════════════════════════
@@ -91,7 +100,6 @@ local topStatus = make("TextLabel", {
 	TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 6,
 }, topBar)
 
--- TEST badge
 if GameConfig.TEST_MODE then
 	local badge = make("Frame", {
 		Size = UDim2.new(0,90,0,22), Position = UDim2.new(1,-96,0.5,-11),
@@ -144,19 +152,19 @@ local leftCard = make("Frame", {
 	Size = UDim2.new(0.47,0,1,0), Position = UDim2.new(0,0,0,0),
 	BackgroundColor3 = Color3.fromRGB(20,80,210), BorderSizePixel = 0, ZIndex = 6,
 }, choicePanel)
-make("UICorner",   { CornerRadius = UDim.new(0,14) }, leftCard)
-make("UIStroke",   { Color = Color3.fromRGB(80,80,80), Thickness = 2.5 }, leftCard)
+make("UICorner", { CornerRadius = UDim.new(0,14) }, leftCard)
+make("UIStroke", { Color = Color3.fromRGB(80,80,80), Thickness = 2.5 }, leftCard)
 make("UIGradient", {
 	Color = ColorSequence.new{
 		ColorSequenceKeypoint.new(0, Color3.fromRGB(40,110,255)),
 		ColorSequenceKeypoint.new(1, Color3.fromRGB(10,50,160)),
 	}, Rotation = 120,
 }, leftCard)
-make("ImageLabel", {
+local leftIcon = make("ImageLabel", {
 	Name = "Icon", Size = UDim2.new(0.55,0,0.42,0), Position = UDim2.new(0.225,0,0.04,0),
 	BackgroundTransparency = 1, Image = PLACEHOLDER, ZIndex = 7,
 }, leftCard)
-make("UICorner", { CornerRadius = UDim.new(0,8) }, leftCard:FindFirstChild("Icon"))
+make("UICorner", { CornerRadius = UDim.new(0,8) }, leftIcon)
 local leftLabel = make("TextLabel", {
 	Name = "Label",
 	Size = UDim2.new(1,-8,0.24,0), Position = UDim2.new(0,4,0.48,0),
@@ -179,19 +187,19 @@ local rightCard = make("Frame", {
 	Size = UDim2.new(0.47,0,1,0), Position = UDim2.new(0.53,0,0,0),
 	BackgroundColor3 = Color3.fromRGB(190,55,10), BorderSizePixel = 0, ZIndex = 6,
 }, choicePanel)
-make("UICorner",   { CornerRadius = UDim.new(0,14) }, rightCard)
-make("UIStroke",   { Color = Color3.fromRGB(80,80,80), Thickness = 2.5 }, rightCard)
+make("UICorner", { CornerRadius = UDim.new(0,14) }, rightCard)
+make("UIStroke", { Color = Color3.fromRGB(80,80,80), Thickness = 2.5 }, rightCard)
 make("UIGradient", {
 	Color = ColorSequence.new{
 		ColorSequenceKeypoint.new(0, Color3.fromRGB(255,90,20)),
 		ColorSequenceKeypoint.new(1, Color3.fromRGB(140,30,0)),
 	}, Rotation = 120,
 }, rightCard)
-make("ImageLabel", {
+local rightIcon = make("ImageLabel", {
 	Name = "Icon", Size = UDim2.new(0.55,0,0.42,0), Position = UDim2.new(0.225,0,0.04,0),
 	BackgroundTransparency = 1, Image = PLACEHOLDER, ZIndex = 7,
 }, rightCard)
-make("UICorner", { CornerRadius = UDim.new(0,8) }, rightCard:FindFirstChild("Icon"))
+make("UICorner", { CornerRadius = UDim.new(0,8) }, rightIcon)
 local rightLabel = make("TextLabel", {
 	Name = "Label",
 	Size = UDim2.new(1,-8,0.24,0), Position = UDim2.new(0,4,0.48,0),
@@ -209,23 +217,22 @@ local rightBtn = make("TextButton", {
 make("UICorner", { CornerRadius = UDim.new(0,8) }, rightBtn)
 
 -- ── КНОПКА СКРЫТЬ / ПОКАЗАТЬ ──────────────────────────────
--- Создаётся прямо здесь, не зависит ни от каких контроллеров
 local toggleBtn = make("TextButton", {
-	Name             = "ToggleChoiceBtn",
-	Size             = UDim2.new(0, 120, 0, 30),
-	Position         = UDim2.new(1, -128, 1, -236),
-	BackgroundColor3 = Color3.fromRGB(20, 20, 35),
+	Name = "ToggleChoiceBtn",
+	Size = UDim2.new(0,120,0,30),
+	Position = UDim2.new(1,-128,1,-236),
+	BackgroundColor3 = Color3.fromRGB(20,20,35),
 	BackgroundTransparency = 0.25,
-	TextColor3       = Color3.fromRGB(200, 200, 255),
-	Font             = Enum.Font.GothamSemibold,
-	Text             = "👁 Скрыть",
-	TextScaled       = true,
-	Visible          = false,
-	ZIndex           = 12,
-	BorderSizePixel  = 0,
+	TextColor3 = Color3.fromRGB(200,200,255),
+	Font = Enum.Font.GothamSemibold,
+	Text = "👁 Скрыть",
+	TextScaled = true,
+	Visible = false,
+	ZIndex = 12,
+	BorderSizePixel = 0,
 }, mainHUD)
 make("UICorner", { CornerRadius = UDim.new(0,8) }, toggleBtn)
-make("UIStroke",  {
+make("UIStroke", {
 	Color = Color3.fromRGB(120,100,255), Thickness = 1.5, Transparency = 0.4,
 }, toggleBtn)
 
@@ -237,7 +244,7 @@ local resultPanel = make("Frame", {
 	BackgroundTransparency = 0.12, BorderSizePixel = 0, Visible = false, ZIndex = 9,
 }, mainHUD)
 make("UICorner", { CornerRadius = UDim.new(0,18) }, resultPanel)
-make("UIStroke",  { Color = Color3.fromRGB(255,200,50), Thickness = 2, Transparency = 0.3 }, resultPanel)
+make("UIStroke", { Color = Color3.fromRGB(255,200,50), Thickness = 2, Transparency = 0.3 }, resultPanel)
 make("ImageLabel", {
 	Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1,
 	Image = PLACEHOLDER, ImageTransparency = 0.78, ZIndex = 9,
@@ -250,7 +257,7 @@ local resultLabel = make("TextLabel", {
 	TextStrokeTransparency = 0.3, TextStrokeColor3 = Color3.fromRGB(0,0,0),
 }, resultPanel)
 
--- ── FADE FRAME (только для коротких переходов) ────────────
+-- ── FADE FRAME ────────────────────────────────────────────
 local fadeFrame = make("Frame", {
 	Name = "FadeFrame",
 	Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.fromRGB(0,0,0),
@@ -262,11 +269,11 @@ print("[ClientBootstrap] MainHUD создан.")
 -- ══════════════════════════════════════════════════════════
 -- СОСТОЯНИЕ КЛИЕНТА
 -- ══════════════════════════════════════════════════════════
-local currentPhase   = nil
-local choiceEnabled  = false   -- разрешено отправлять SubmitChoice
-local currentSide    = nil     -- выбранная сторона
-local panelVisible   = true    -- видимость карточек (toggle)
-local battleActive   = false
+local currentPhase  = nil
+local choiceEnabled = false
+local currentSide   = nil
+local panelVisible  = true
+local battleActive  = false
 
 -- ══════════════════════════════════════════════════════════
 -- HUD HELPERS
@@ -283,7 +290,7 @@ local function setTimer(seconds)
 	end
 	timerContainer.Visible = true
 	local s = math.max(0, math.floor(seconds))
-	timerLabel.Text = string.format("%d:%02d", math.floor(s/60), s%60)
+	timerLabel.Text       = string.format("%d:%02d", math.floor(s/60), s%60)
 	timerLabel.TextColor3 = s <= 5
 		and Color3.fromRGB(255,80,50)
 		or  Color3.fromRGB(255,255,255)
@@ -294,8 +301,7 @@ local function showBanner(text, color, duration)
 	roundBanner.TextColor3       = color or Color3.fromRGB(255,220,50)
 	roundBanner.TextTransparency = 0
 	roundBanner.Visible          = true
-	tw(roundBanner, { TextTransparency = 1 }, duration or 2.5,
-		Enum.EasingStyle.Linear)
+	tw(roundBanner, { TextTransparency = 1 }, duration or 2.5, Enum.EasingStyle.Linear)
 	task.delay(duration or 2.5, function()
 		roundBanner.Visible = false
 	end)
@@ -304,12 +310,12 @@ end
 local function showResult(isWinner, isDraw)
 	resultPanel.Visible              = true
 	resultPanel.BackgroundTransparency = 1
-	resultLabel.Text = isDraw and "🤝 Ничья!"
-		or isWinner and "🏆 ПОБЕДА!"
-		or "💀 Поражение"
-	resultLabel.TextColor3 = isDraw and Color3.fromRGB(200,200,200)
-		or isWinner and Color3.fromRGB(255,220,50)
-		or Color3.fromRGB(220,80,60)
+	resultLabel.Text = isDraw      and "🤝 Ничья!"
+		or isWinner  and "🏆 ПОБЕДА!"
+		or               "💀 Поражение"
+	resultLabel.TextColor3 = isDraw     and Color3.fromRGB(200,200,200)
+		or isWinner         and Color3.fromRGB(255,220,50)
+		or                      Color3.fromRGB(220,80,60)
 	tw(resultPanel, { BackgroundTransparency = 0.12 }, 0.4)
 end
 
@@ -331,6 +337,13 @@ end
 -- ══════════════════════════════════════════════════════════
 -- CHOICE PANEL HELPERS
 -- ══════════════════════════════════════════════════════════
+
+-- Обновляет иконку карточки: принимает числовой Image ID из ContentConfig.
+-- Если id = 0 или nil — показывает PLACEHOLDER.
+local function setCardImage(icon, imageId)
+	icon.Image = resolveImage(imageId)
+end
+
 local function refreshBorders()
 	local ls = leftCard:FindFirstChildOfClass("UIStroke")
 	local rs = rightCard:FindFirstChildOfClass("UIStroke")
@@ -347,10 +360,8 @@ local function refreshBorders()
 	end
 end
 
--- Применить прозрачность к карточкам не трогая choicePanel.Visible
--- (кнопки остаются кликабельными даже когда карточки «скрыты»)
 local function applyCardVisibility(visible, animate)
-	panelVisible  = visible
+	panelVisible = visible
 	local targetT = visible and 0 or 1
 	local dur     = animate and 0.25 or 0
 	for _, card in ipairs({leftCard, rightCard}) do
@@ -366,10 +377,9 @@ local function applyCardVisibility(visible, animate)
 				else child.TextTransparency = targetT end
 			elseif child:IsA("TextButton") then
 				if animate then
-					tw(child, { TextTransparency = targetT,
-								BackgroundTransparency = targetT }, dur)
+					tw(child, { TextTransparency = targetT, BackgroundTransparency = targetT }, dur)
 				else
-					child.TextTransparency       = targetT
+					child.TextTransparency      = targetT
 					child.BackgroundTransparency = targetT
 				end
 			elseif child:IsA("ImageLabel") then
@@ -385,20 +395,21 @@ local function applyCardVisibility(visible, animate)
 end
 
 local function showChoicePanel(data)
-	-- Сбросить позиции карточек
 	leftCard.Position  = UDim2.new(0,0,0,0)
 	rightCard.Position = UDim2.new(0.53,0,0,0)
 	applyCardVisibility(true, false)
-
 	if data then
 		leftLabel.Text  = data.LeftText  or "Лево"
 		rightLabel.Text = data.RightText or "Право"
+		-- Обновляем иконки из данных сервера
+		setCardImage(leftIcon,  data.LeftImage)
+		setCardImage(rightIcon, data.RightImage)
 	end
 	leftCard.Visible   = true
 	rightCard.Visible  = true
 	choicePanel.Visible = true
-	currentSide        = nil
-	panelVisible       = true
+	currentSide = nil
+	panelVisible = true
 	refreshBorders()
 end
 
@@ -420,9 +431,7 @@ local function hideChoicePanel(animate)
 	task.delay(0.25, function() toggleBtn.Visible = false end)
 end
 
--- ══════════════════════════════════════════════════════════
--- КНОПКА СКРЫТЬ — подключаем здесь, гарантированно
--- ══════════════════════════════════════════════════════════
+-- ── Кнопка скрыть ─────────────────────────────────────────
 toggleBtn.MouseButton1Click:Connect(function()
 	applyCardVisibility(not panelVisible, true)
 end)
@@ -491,7 +500,7 @@ UserInputService.InputBegan:Connect(function(input, gp)
 	if gp or not battleActive then return end
 	local now = tick()
 	if input.KeyCode == Enum.KeyCode.F
-		or input.UserInputType == Enum.UserInputType.MouseButton1 then
+	or input.UserInputType == Enum.UserInputType.MouseButton1 then
 		if now - lastAttack < CombatConfig.ATTACK_COOLDOWN then return end
 		lastAttack = now
 		local t = findClosestEnemy()
@@ -507,7 +516,7 @@ UserInputService.InputBegan:Connect(function(input, gp)
 	end
 end)
 
-print("[CombatController] Initialized. Keys: F/Click=Attack, Q=Dash, E=Block")
+print("[ClientBootstrap] Combat input ready. Keys: F/Click=Attack, Q=Dash, E=Block")
 
 -- ══════════════════════════════════════════════════════════
 -- CELEBRATION
@@ -541,12 +550,12 @@ end
 RoundStateRemote.OnClientEvent:Connect(function(data)
 	local phase = data.Phase
 
-	-- Обновление таймера без смены фазы
+	-- Тик таймера без смены фазы
 	if data.Timer ~= nil and phase == nil then
 		setTimer(data.Timer)
 		return
 	end
-	-- Обновление таймера во время DarkChoice
+	-- Тик таймера во время DarkChoice
 	if data.Timer ~= nil and phase == Enums.Phase.DarkChoice then
 		setTimer(data.Timer)
 		return
@@ -571,34 +580,36 @@ RoundStateRemote.OnClientEvent:Connect(function(data)
 	elseif phase == Enums.Phase.RevealChoiceA then
 		choiceEnabled = false
 		local d = data.Data or {}
-		-- Показываем только левую карточку
-		leftCard.Position  = UDim2.new(-0.6, 0, 0, 0)
-		leftCard.BackgroundTransparency = 0.8
-		leftCard.Visible   = true
-		rightCard.Visible  = false
-		choicePanel.Visible = true
-		toggleBtn.Visible  = false
+		-- Обновляем иконку левой карточки из данных сервера
+		setCardImage(leftIcon, d.Image)
 		if leftLabel and d.Text then leftLabel.Text = d.Text end
+		leftCard.Position            = UDim2.new(-0.6,0,0,0)
+		leftCard.BackgroundTransparency = 0.8
+		leftCard.Visible  = true
+		rightCard.Visible = false
+		choicePanel.Visible = true
+		toggleBtn.Visible   = false
 		tw(leftCard, { Position = UDim2.new(0,0,0,0), BackgroundTransparency = 0 }, 0.45, Enum.EasingStyle.Back)
 		setStatus("Вариант А: " .. (d.Text or "?"), Color3.fromRGB(150,180,255))
 
 	elseif phase == Enums.Phase.RevealChoiceB then
 		choiceEnabled = false
 		local d = data.Data or {}
-		rightCard.Position = UDim2.new(1.1, 0, 0, 0)
-		rightCard.BackgroundTransparency = 0.8
-		rightCard.Visible  = true
+		-- Обновляем иконку правой карточки из данных сервера
+		setCardImage(rightIcon, d.Image)
 		if rightLabel and d.Text then rightLabel.Text = d.Text end
+		rightCard.Position            = UDim2.new(1.1,0,0,0)
+		rightCard.BackgroundTransparency = 0.8
+		rightCard.Visible = true
 		tw(rightCard, { Position = UDim2.new(0.53,0,0,0), BackgroundTransparency = 0 }, 0.45, Enum.EasingStyle.Back)
 		setStatus("Вариант Б: " .. (d.Text or "?"), Color3.fromRGB(255,160,100))
 
 	elseif phase == Enums.Phase.DarkChoice then
 		local d = data.Data or {}
 		choiceEnabled = true
-		-- Показываем полную панель с обеими карточками
+		-- showChoicePanel уже обновит иконки через setCardImage внутри
 		showChoicePanel(d)
 		if d.Duration then setTimer(d.Duration) end
-		-- Показываем кнопку скрыть
 		toggleBtn.Visible = true
 		toggleBtn.Text    = "👁 Скрыть"
 		toggleBtn.BackgroundTransparency = 1
@@ -609,7 +620,6 @@ RoundStateRemote.OnClientEvent:Connect(function(data)
 		choiceEnabled = false
 		setTimer(nil)
 		setStatus("Выбор зафиксирован!", Color3.fromRGB(180,255,180))
-		-- плавно скрываем кнопку скрыть
 		tw(toggleBtn, { BackgroundTransparency = 1 }, 0.3)
 		task.delay(0.35, function() toggleBtn.Visible = false end)
 
@@ -627,7 +637,7 @@ RoundStateRemote.OnClientEvent:Connect(function(data)
 		local d = data.Data or {}
 		if d.Duration then setTimer(d.Duration) end
 		showBanner("⚔️ БИТВА!", Color3.fromRGB(255,60,60), 2)
-		setStatus("⚔️ Сражайся! [F=Атака  Q=Рывок  E=Блок]", Color3.fromRGB(255,80,80))
+		setStatus("⚔️ Сражайся! [F=Атака Q=Рывок E=Блок]", Color3.fromRGB(255,80,80))
 
 	elseif phase == Enums.Phase.Victory then
 		battleActive = false
@@ -672,9 +682,8 @@ PlayCelebRemote.OnClientEvent:Connect(function(data)
 	if data then playCelebration(data.AnimId, data.SfxId) end
 end)
 
--- SyncDarkness — убрано затемнение, оставляем пустой хандлер
-SyncDarkRemote.OnClientEvent:Connect(function(data)
-	-- затемнение отключено по запросу
+-- Затемнение отключено по запросу
+SyncDarkRemote.OnClientEvent:Connect(function(_)
 end)
 
 print("[ClientBootstrap] Готов,", localPlayer.Name)
