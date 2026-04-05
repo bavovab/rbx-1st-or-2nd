@@ -9,18 +9,19 @@ local REWARDS = {
 	MVP           = 15,
 }
 
--- allParticipants  — все игроки раунда (включая умерших во время боя)
--- winnerSide       — "Left" | "Right" | "Draw"
+-- allParticipants      — все игроки раунда (включая умерших)
+-- winnerSide           — "Left" | "Right" | "Draw"
 -- playerStateService
--- combatService    — для получения diedInRound
-function RewardService.GrantRoundRewards(allParticipants, winnerSide, playerStateService, combatService)
+-- combatService        — для GetDiedInRound
+-- dataService          — для сохранения Wins/Coins (опционально)
+function RewardService.GrantRoundRewards(allParticipants, winnerSide, playerStateService, combatService, dataService)
 	if not allParticipants or not playerStateService then
 		warn("[RewardService] Invalid arguments to GrantRoundRewards")
 		return
 	end
 
-	local isDraw    = (winnerSide == "Draw")
-	local allStates = playerStateService.GetAllStates()
+	local isDraw      = (winnerSide == "Draw")
+	local allStates   = playerStateService.GetAllStates()
 	local diedInRound = combatService and combatService.GetDiedInRound() or {}
 
 	local mvp, mvpDamage = nil, -1
@@ -32,16 +33,12 @@ function RewardService.GrantRoundRewards(allParticipants, winnerSide, playerStat
 		local state = allStates[uid]
 		if not state then continue end
 
-		local ls = player:FindFirstChild("leaderstats")
-		if not ls then continue end
-
-		local coinsVal = ls:FindFirstChild("Coins")
-		local winsVal  = ls:FindFirstChild("Wins")
-
 		-- Участие — все получают
-		if coinsVal then coinsVal.Value += REWARDS.Participation end
+		if dataService then
+			dataService.AddCoins(player, REWARDS.Participation)
+		end
 
-		-- Победа: живые победители + умершие из winning team
+		-- Победа
 		local teamMatches = isDraw
 			or (state.Team == winnerSide)
 			or (winnerSide == "Left"  and state.Team == "Left")
@@ -50,23 +47,27 @@ function RewardService.GrantRoundRewards(allParticipants, winnerSide, playerStat
 		local isWinner = isDraw or teamMatches
 
 		if isWinner then
-			if winsVal  then winsVal.Value  += 1 end
-			if coinsVal then coinsVal.Value += REWARDS.Winner end
+			if dataService then
+				dataService.AddWin(player, 1)
+				dataService.AddCoins(player, REWARDS.Winner)
+			end
 		end
 
-		-- Выживание — только тот, кто не умер во время боя
+		-- Выживание — только тот кто не умер во время боя
 		if state.IsAlive and not diedInRound[uid] then
-			if coinsVal then coinsVal.Value += REWARDS.Survival end
+			if dataService then
+				dataService.AddCoins(player, REWARDS.Survival)
+			end
 		end
 
 		-- MVP кандидат — наибольший урон из победившей команды
 		if isWinner and (state.DamageDealt or 0) > mvpDamage then
 			mvpDamage = state.DamageDealt
-			mvp = player
+			mvp       = player
 		end
 
 		print(string.format(
-			"[RewardService] %s: winner=%s, alive=%s, damage=%d",
+			"[RewardService] %s: winner=%s alive=%s damage=%d",
 			player.Name,
 			tostring(isWinner),
 			tostring(state.IsAlive),
@@ -76,12 +77,15 @@ function RewardService.GrantRoundRewards(allParticipants, winnerSide, playerStat
 
 	-- MVP бонус
 	if mvp then
-		local ls = mvp:FindFirstChild("leaderstats")
-		if ls then
-			local coinsVal = ls:FindFirstChild("Coins")
-			if coinsVal then coinsVal.Value += REWARDS.MVP end
-			print(string.format("[RewardService] MVP: %s +%d coins", mvp.Name, REWARDS.MVP))
+		if dataService then
+			dataService.AddCoins(mvp, REWARDS.MVP)
 		end
+		print(string.format("[RewardService] MVP: %s +%d coins", mvp.Name, REWARDS.MVP))
+	end
+
+	-- Сохраняем после раздачи наград
+	if dataService then
+		dataService.SaveAll()
 	end
 end
 

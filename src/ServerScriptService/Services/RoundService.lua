@@ -1,19 +1,19 @@
 -- ModuleScript: ServerScriptService/Services/RoundService
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
+local Players           = game:GetService("Players")
 
-local Enums = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Enums"))
-local Utility = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utility"))
+local Enums      = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Enums"))
+local Utility    = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utility"))
 local GameConfig = require(ReplicatedStorage:WaitForChild("Config"):WaitForChild("GameConfig"))
 local RoundConfig = require(ReplicatedStorage:WaitForChild("Config"):WaitForChild("RoundConfig"))
 
-local Remotes = ReplicatedStorage:WaitForChild("Remotes")
-local RoundState = Remotes:WaitForChild("RoundState")
-local HUDMessage = Remotes:WaitForChild("HUDMessage")
+local Remotes      = ReplicatedStorage:WaitForChild("Remotes")
+local RoundState   = Remotes:WaitForChild("RoundState")
+local HUDMessage   = Remotes:WaitForChild("HUDMessage")
 local SyncDarkness = Remotes:WaitForChild("SyncDarkness")
 local SubmitChoice = Remotes:WaitForChild("SubmitChoice")
-local CombatInput = Remotes:WaitForChild("CombatInput")
+local CombatInput  = Remotes:WaitForChild("CombatInput")
 
 local PlayerStateService
 local ChoiceService
@@ -23,24 +23,29 @@ local CombatService
 local RewardService
 local CelebrationService
 local ValidationService
+local DataService
 
 local RoundService = {}
 
 local roundState = {
-	Phase = Enums.Phase.Intermission,
+	Phase       = Enums.Phase.Intermission,
 	RoundNumber = 0,
 	CurrentPair = nil,
-	Winners = "Draw",
-	IsActive = false,
+	Winners     = "Draw",
+	IsActive    = false,
 }
 
 local combatRateLimiter = {}
+
+-----------------------------------------------------------------------
+-- Broadcast хелперы
+-----------------------------------------------------------------------
 
 local function broadcastPhase(phase, extraData)
 	roundState.Phase = phase
 	RoundState:FireAllClients({
 		Phase = phase,
-		Data = extraData or {},
+		Data  = extraData or {},
 	})
 	print(string.format("[RoundService] Phase -> %s", tostring(phase)))
 end
@@ -55,9 +60,13 @@ end
 local function broadcastHUD(message, color)
 	HUDMessage:FireAllClients({
 		Message = message,
-		Color = color or Color3.fromRGB(255, 255, 255),
+		Color   = color or Color3.fromRGB(255, 255, 255),
 	})
 end
+
+-----------------------------------------------------------------------
+-- Вспомогательные
+-----------------------------------------------------------------------
 
 local function getEligiblePlayers()
 	local participants = {}
@@ -84,6 +93,10 @@ local function isInsidePart(part, position)
 		and math.abs(localPos.Y) <= half.Y
 		and math.abs(localPos.Z) <= half.Z
 end
+
+-----------------------------------------------------------------------
+-- Remote handlers
+-----------------------------------------------------------------------
 
 local function onSubmitChoice(player, payload)
 	local allStates = PlayerStateService.GetAllStates()
@@ -116,27 +129,37 @@ local function onPlayerRemoving(player)
 	print(string.format("[RoundService] %s left during active round.", player.Name))
 end
 
--- ══════════════════════════════════════════════════
+-----------------------------------------------------------------------
 -- ФАЗЫ
--- ══════════════════════════════════════════════════
+-----------------------------------------------------------------------
 
 local function phaseIntermission()
 	broadcastPhase(Enums.Phase.Intermission, {
 		TestMode = GameConfig.TEST_MODE,
 	})
 
-	local total = GameConfig.INTERMISSION_TIME
+	local total     = GameConfig.INTERMISSION_TIME
+	local canStart  = false
 
 	for elapsed = 1, total do
 		task.wait(1)
-		local count = #Players:GetPlayers()
+
+		local count     = #Players:GetPlayers()
 		local remaining = total - elapsed
+
+		-- Сначала показываем таймер
 		broadcastTimer(Enums.Phase.Intermission, remaining)
 
 		if count >= GameConfig.MIN_PLAYERS then
 			if remaining <= 5 and remaining > 0 then
-				broadcastHUD("Раунд начнётся через " .. remaining .. "...", Color3.fromRGB(255, 220, 0))
-			elseif remaining <= 0 then
+				broadcastHUD(
+					"Раунд начнётся через " .. remaining .. "...",
+					Color3.fromRGB(255, 220, 0)
+				)
+			end
+			-- Когда время вышло — выходим
+			if remaining <= 0 then
+				canStart = true
 				break
 			end
 		else
@@ -147,7 +170,12 @@ local function phaseIntermission()
 		end
 	end
 
-	return #Players:GetPlayers() >= GameConfig.MIN_PLAYERS
+	-- Финальная проверка (вдруг вышли по концу цикла, а не по break)
+	if not canStart then
+		canStart = #Players:GetPlayers() >= GameConfig.MIN_PLAYERS
+	end
+
+	return canStart
 end
 
 local function phaseTeleportToPreArena(participants)
@@ -170,7 +198,7 @@ local function phaseRevealChoiceA(pair)
 		Text  = pair.Left.Text,
 		Color = pair.Left.Color,
 		Image = pair.Left.Image or 0,
-		Music = pair.Left.Music or 0,   -- ← музыка варианта A
+		Music = pair.Left.Music or 0,
 	})
 	broadcastHUD("Вариант A: " .. pair.Left.Text, pair.Left.Color)
 	task.wait(GameConfig.REVEAL_A_TIME)
@@ -181,7 +209,7 @@ local function phaseRevealChoiceB(pair)
 		Text  = pair.Right.Text,
 		Color = pair.Right.Color,
 		Image = pair.Right.Image or 0,
-		Music = pair.Right.Music or 0,  -- ← музыка варианта B
+		Music = pair.Right.Music or 0,
 	})
 	broadcastHUD("Вариант B: " .. pair.Right.Text, pair.Right.Color)
 	task.wait(GameConfig.REVEAL_B_TIME)
@@ -205,8 +233,7 @@ local function phaseDarkChoice(pair)
 	local duration = GameConfig.DARK_CHOICE_TIME
 	for elapsed = 1, duration do
 		task.wait(1)
-		local remaining = duration - elapsed
-		broadcastTimer(Enums.Phase.DarkChoice, remaining)
+		broadcastTimer(Enums.Phase.DarkChoice, duration - elapsed)
 	end
 
 	broadcastPhase(Enums.Phase.LockChoice)
@@ -235,17 +262,16 @@ local function phaseAssignTeams(participants)
 	broadcastPhase(Enums.Phase.AssignTeams)
 
 	local allStates = PlayerStateService.GetAllStates()
-	local teams = TeamService.AssignTeams(participants, allStates)
+	local teams     = TeamService.AssignTeams(participants, allStates)
 
 	for _, player in ipairs(teams.Left) do
 		PlayerStateService.SetTeam(player, Enums.Team.Left)
 	end
-
 	for _, player in ipairs(teams.Right) do
 		PlayerStateService.SetTeam(player, Enums.Team.Right)
 	end
 
-	print(string.format("[RoundService] Teams by choice: Left=%d, Right=%d", #teams.Left, #teams.Right))
+	print(string.format("[RoundService] Teams: Left=%d, Right=%d", #teams.Left, #teams.Right))
 	broadcastHUD("Команды сформированы!", Color3.fromRGB(100, 255, 100))
 	task.wait(1)
 
@@ -267,7 +293,6 @@ local function phaseTeleportToBattle(teams)
 end
 
 local function phaseBattle(allParticipants)
-	-- Инициализируем HP и выдаём оружие всем участникам
 	CombatService.InitializeHP(allParticipants)
 
 	broadcastPhase(Enums.Phase.Battle, {
@@ -276,19 +301,18 @@ local function phaseBattle(allParticipants)
 	broadcastHUD("⚔️ БИТВА!", Color3.fromRGB(255, 50, 50))
 
 	local startTime = os.clock()
-	local winner = nil
+	local winner    = nil
 
 	while true do
 		task.wait(0.5)
 
-		local elapsed = os.clock() - startTime
+		local elapsed   = os.clock() - startTime
 		local remaining = math.max(0, math.ceil(GameConfig.BATTLE_TIME - elapsed))
 
-		-- Тик таймера БЕЗ поля Phase — клиент просто обновляет цифру
 		RoundState:FireAllClients({ Timer = remaining })
 
 		local freshStates = PlayerStateService.GetAllStates()
-		local earlyWin = CombatService.CheckWinCondition(freshStates)
+		local earlyWin    = CombatService.CheckWinCondition(freshStates)
 		if earlyWin ~= nil then
 			winner = earlyWin
 			print(string.format("[RoundService] Early winner: %s", tostring(winner)))
@@ -302,8 +326,8 @@ local function phaseBattle(allParticipants)
 	end
 
 	if not winner then
-		local freshStates = PlayerStateService.GetAllStates()
-		local resolveOrder = RoundConfig.WINNER_RESOLVE_ORDER
+		local freshStates   = PlayerStateService.GetAllStates()
+		local resolveOrder  = RoundConfig.WINNER_RESOLVE_ORDER
 			or RoundConfig.TIMER_WIN_PRIORITY
 			or { "AliveCount", "TotalHP", "Draw" }
 		winner = TeamService.ResolveWinner(freshStates, resolveOrder)
@@ -312,7 +336,7 @@ local function phaseBattle(allParticipants)
 
 	if not winner then
 		winner = "Draw"
-		warn("[RoundService] Winner was nil after ResolveWinner; fallback to Draw.")
+		warn("[RoundService] Winner nil after ResolveWinner; fallback to Draw.")
 	end
 
 	return winner
@@ -333,8 +357,15 @@ end
 local function phaseCelebration(winner, allParticipants)
 	broadcastPhase(Enums.Phase.Celebration)
 
-	-- CombatService передаётся чтобы умершие победители тоже получили награду
-	RewardService.GrantRoundRewards(allParticipants, winner, PlayerStateService, CombatService)
+	-- Передаём DataService в RewardService для записи статистики
+	RewardService.GrantRoundRewards(
+		allParticipants,
+		winner,
+		PlayerStateService,
+		CombatService,
+		DataService
+	)
+
 	CelebrationService.Announce(
 		allParticipants,
 		winner,
@@ -351,7 +382,6 @@ local function phaseReturnToLobby(allParticipants)
 	broadcastHUD("Возвращаемся в лобби...", Color3.fromRGB(150, 150, 255))
 	SyncDarkness:FireAllClients({ Dark = false })
 
-	-- Забираем оружие у всех перед возвратом
 	CombatService.EndRound(allParticipants)
 
 	task.wait(GameConfig.RETURN_DELAY)
@@ -362,19 +392,19 @@ end
 local function phaseCleanup()
 	broadcastPhase(Enums.Phase.Cleanup)
 	TeamService.Reset()
-	combatRateLimiter = {}
-	roundState.IsActive = false
+	combatRateLimiter  = {}
+	roundState.IsActive    = false
 	roundState.CurrentPair = nil
-	roundState.Winners = "Draw"
+	roundState.Winners     = "Draw"
 	for _, player in ipairs(Players:GetPlayers()) do
 		PlayerStateService.ResetForRound(player)
 	end
 	task.wait(0.5)
 end
 
--- ══════════════════════════════════════════════════
+-----------------------------------------------------------------------
 -- ГЛАВНЫЙ ЦИКЛ
--- ══════════════════════════════════════════════════
+-----------------------------------------------------------------------
 
 function RoundService.StartLoop()
 	print("[RoundService] Main loop started.")
@@ -388,7 +418,7 @@ function RoundService.StartLoop()
 		local participants = getEligiblePlayers()
 		if #participants == 0 then task.wait(3); continue end
 
-		roundState.IsActive = true
+		roundState.IsActive     = true
 		roundState.RoundNumber += 1
 		print(string.format("[RoundService] === Round %d ===", roundState.RoundNumber))
 
@@ -401,7 +431,7 @@ function RoundService.StartLoop()
 		phaseRevealChoiceB(pair)
 		phaseDarkChoice(pair)
 
-		local teams = phaseAssignTeams(participants)
+		local teams          = phaseAssignTeams(participants)
 		local allParticipants = TeamService.GetAllParticipants()
 
 		if #allParticipants == 0 then
@@ -423,11 +453,11 @@ function RoundService.StartLoop()
 	end
 end
 
--- ══════════════════════════════════════════════════
+-----------------------------------------------------------------------
 -- INIT
--- ══════════════════════════════════════════════════
+-----------------------------------------------------------------------
 
-function RoundService.Init(pss, cs, tsl, ts, cbs, rs, cels, vs)
+function RoundService.Init(pss, cs, tsl, ts, cbs, rs, cels, vs, ds)
 	PlayerStateService   = pss
 	ChoiceService        = cs
 	TeleportServiceLocal = tsl
@@ -436,6 +466,7 @@ function RoundService.Init(pss, cs, tsl, ts, cbs, rs, cels, vs)
 	RewardService        = rs
 	CelebrationService   = cels
 	ValidationService    = vs
+	DataService          = ds   -- ← новый аргумент
 
 	SubmitChoice.OnServerEvent:Connect(onSubmitChoice)
 	CombatInput.OnServerEvent:Connect(onCombatInput)

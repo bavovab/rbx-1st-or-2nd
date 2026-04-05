@@ -1,5 +1,4 @@
 -- Bootstrap.server.lua
-
 local ReplicatedStorage   = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
@@ -32,7 +31,7 @@ ensureRemote("SyncDarkness")
 
 print("[Bootstrap] Remotes готовы.")
 
--- ===== Safe require with error reporting =====
+-- ===== Safe require =====
 local function safeRequire(moduleScript, label)
 	local ok, result = pcall(require, moduleScript)
 	if not ok then
@@ -68,24 +67,30 @@ local CombatService        = getService("CombatService")
 local RewardService        = getService("RewardService")
 local CelebrationService   = getService("CelebrationService")
 local RoundService         = getService("RoundService")
+local DonateService        = getService("DonateService")
+local DataService          = getService("DataService")
 
--- ===== Validate required functions exist =====
+-- ===== Validate =====
 local function assertFn(service, fnName, label)
 	if type(service[fnName]) ~= "function" then
 		error("[Bootstrap] " .. label .. " is missing function: " .. fnName)
 	end
 end
 
-assertFn(PlayerStateService,   "Init",          "PlayerStateService")
-assertFn(TeleportServiceLocal, "Init",          "TeleportServiceLocal")
-assertFn(CombatService,        "Init",          "CombatService")
-assertFn(RoundService,         "Init",          "RoundService")
-assertFn(RoundService,         "StartLoop",     "RoundService")
+assertFn(PlayerStateService,   "Init",      "PlayerStateService")
+assertFn(TeleportServiceLocal, "Init",      "TeleportServiceLocal")
+assertFn(CombatService,        "Init",      "CombatService")
+assertFn(RoundService,         "Init",      "RoundService")
+assertFn(RoundService,         "StartLoop", "RoundService")
 
 -- ===== Initialize =====
+DataService.Init()            -- первым: нужен при PlayerAdded
 PlayerStateService.Init()
 TeleportServiceLocal.Init(PlayerStateService)
 CombatService.Init(PlayerStateService, TeamService)
+DonateService.Init(PlayerStateService, CombatService)
+CombatService.SetDonateService(DonateService)
+CombatService.SetDataService(DataService)
 
 RoundService.Init(
 	PlayerStateService,
@@ -95,12 +100,12 @@ RoundService.Init(
 	CombatService,
 	RewardService,
 	CelebrationService,
-	ValidationService
+	ValidationService,
+	DataService           -- ← 9й аргумент
 )
 
 print("[Bootstrap] Все сервисы инициализированы. Запускаем раунд.")
 
--- ===== Start round loop =====
 task.spawn(function()
 	RoundService.StartLoop()
 end)

@@ -1,5 +1,8 @@
 -- ModuleScript: ServerScriptService/Services/CombatService.lua
 
+local DonateService -- инжектируется через SetDonateService
+local DataService   -- инжектируется через SetDataService
+
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -14,21 +17,30 @@ local PlayerStateService
 
 local CombatService = {}
 
--- { [userId] = { hp, lastAttack, team } }
 local combatData  = {}
--- { [userId] = true } — умершие во время боя текущего раунда
 local diedInRound = {}
--- соединения Humanoid.Died
 local diedConns   = {}
 
 -----------------------------------------------------------------------
--- Получаем шаблон оружия из Workspace
+-- Инжекция зависимостей
+-----------------------------------------------------------------------
+
+function CombatService.SetDonateService(ds)
+	DonateService = ds
+end
+
+function CombatService.SetDataService(ds)
+	DataService = ds
+end
+
+-----------------------------------------------------------------------
+-- Шаблон оружия
 -----------------------------------------------------------------------
 
 local function getWeaponTemplate()
 	local template = workspace:FindFirstChild("ClassicSword")
 	if not template then
-		warn("[CombatService] ClassicSword не найден в Workspace! Положи Tool с именем 'ClassicSword' в Workspace.")
+		warn("[CombatService] ClassicSword не найден в Workspace!")
 		return nil
 	end
 	return template
@@ -42,7 +54,6 @@ local function giveWeapon(player)
 	local template = getWeaponTemplate()
 	if not template then return end
 
-	-- Убираем старое если есть
 	local backpack = player:FindFirstChildOfClass("Backpack")
 	local char     = player.Character
 
@@ -55,7 +66,6 @@ local function giveWeapon(player)
 		if old then old:Destroy() end
 	end
 
-	-- Клонируем в Backpack
 	if backpack then
 		local clone = template:Clone()
 		clone.Parent = backpack
@@ -85,7 +95,7 @@ end
 
 local function onPlayerDiedInBattle(player)
 	local uid = player.UserId
-	if not combatData[uid] then return end -- не участник или уже обработан
+	if not combatData[uid] then return end
 
 	diedInRound[uid] = true
 	combatData[uid]  = nil
@@ -103,35 +113,31 @@ local function onPlayerDiedInBattle(player)
 		Color   = Color3.fromRGB(255, 100, 100),
 	})
 
-	-- Телепортируем в лобби через секунду
 	task.delay(1.5, function()
 		if not player or not player.Parent then return end
 
-		local lobby = workspace:FindFirstChild("Lobby")
+		local lobby       = workspace:FindFirstChild("Lobby")
 		local spawnPoints = lobby and lobby:FindFirstChild("SpawnPoints")
 		local spawnList   = spawnPoints and spawnPoints:GetChildren()
 		local spawn       = spawnList and spawnList[1]
 
-		-- LoadCharacter возрождает игрока и сбрасывает позицию на SpawnLocation
-		-- но мы хотим контроль — телепортируем HRP вручную
 		local char = player.Character
 		if char then
-			local hrp = char:FindFirstChild("HumanoidRootPart")
 			local hum = char:FindFirstChildOfClass("Humanoid")
 
 			if hum and hum.Health <= 0 then
-				-- Игрок мёртв — нужно LoadCharacter чтобы возродить
 				player:LoadCharacter()
-				-- После LoadCharacter ждём появления персонажа и телепортируем
 				local newChar = player.CharacterAdded:Wait()
 				task.wait(0.1)
 				local newHRP = newChar:FindFirstChild("HumanoidRootPart")
 				if newHRP and spawn then
 					newHRP.CFrame = spawn.CFrame + Vector3.new(0, 3, 0)
 				end
-			elseif hrp and spawn then
-				-- Игрок жив (урон через HP без реального Humanoid.Health = 0)
-				hrp.CFrame = spawn.CFrame + Vector3.new(0, 3, 0)
+			else
+				local hrp = char:FindFirstChild("HumanoidRootPart")
+				if hrp and spawn then
+					hrp.CFrame = spawn.CFrame + Vector3.new(0, 3, 0)
+				end
 			end
 		end
 	end)
@@ -174,13 +180,11 @@ local function applyDamage(attackerUserId, targetPlayer, damage)
 		end
 	end
 
-	-- Фидбек жертве
 	HUDMessage:FireClient(targetPlayer, {
 		Message = "❤️ HP: " .. data.hp .. " / " .. CombatConfig.MAX_HP,
 		Color   = Color3.fromRGB(255, 80, 80),
 	})
 
-	-- Фидбек атакующему
 	local attacker = Players:GetPlayerByUserId(attackerUserId)
 	if attacker then
 		HUDMessage:FireClient(attacker, {
@@ -195,7 +199,11 @@ local function applyDamage(attackerUserId, targetPlayer, damage)
 	))
 
 	if data.hp <= 0 then
-		-- Убиваем Humanoid чтобы сработал Died → onPlayerDiedInBattle
+		-- Записываем убийство атакующему
+		if DataService and attacker then
+			DataService.AddKill(attacker, 1)
+		end
+
 		local char = targetPlayer.Character
 		if char then
 			local hum = char:FindFirstChildOfClass("Humanoid")
@@ -208,12 +216,11 @@ end
 -- Публичный API
 -----------------------------------------------------------------------
 
-function CombatService.Init(pss)
+function CombatService.Init(pss, ts)
 	PlayerStateService = pss
 end
 
 function CombatService.InitializeHP(playerList)
-	-- Сброс состояния
 	combatData  = {}
 	diedInRound = {}
 
@@ -234,13 +241,15 @@ function CombatService.InitializeHP(playerList)
 			PlayerStateService.SetHP(player, CombatConfig.MAX_HP)
 		end
 
-		-- Выдаём оружие
 		giveWeapon(player)
-
-		-- Подписываемся на смерть
 		setupDiedConnection(player)
 
 		print(string.format("[CombatService] %s инициализирован: HP=%d", player.Name, CombatConfig.MAX_HP))
+	end
+
+	-- Выдаём бомбы донатерам после giveWeapon для всех
+	if DonateService then
+		DonateService.GrantPendingBombs(playerList)
 	end
 end
 
@@ -262,10 +271,8 @@ function CombatService.ProcessAction(player, payload)
 		local targetPlayer = Players:GetPlayerByUserId(targetId)
 		if not targetPlayer then return end
 
-		-- Цель должна быть ещё в бою
 		if not combatData[targetId] then return end
 
-		-- Серверная проверка дистанции
 		local attackerHRP = Utility.GetHumanoidRootPart(player)
 		local targetHRP   = Utility.GetHumanoidRootPart(targetPlayer)
 		if not attackerHRP or not targetHRP then return end
@@ -313,7 +320,7 @@ function CombatService.CheckWinCondition(allStates)
 		return Enums.Team.Right
 	end
 
-	return nil -- бой продолжается
+	return nil
 end
 
 function CombatService.EndRound(playerList)
@@ -325,6 +332,10 @@ function CombatService.EndRound(playerList)
 		conn:Disconnect()
 	end
 	diedConns = {}
+
+	if DonateService then
+		DonateService.ClearActiveBombs(playerList)
+	end
 
 	print("[CombatService] EndRound: оружие изъято, соединения очищены.")
 end
