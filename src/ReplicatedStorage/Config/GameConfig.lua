@@ -6,8 +6,8 @@ GameConfig.TEST_MODE            = true
 
 GameConfig.INTERMISSION_TIME    = 15
 GameConfig.PRE_ARENA_WAIT_TIME  = 3
-GameConfig.REVEAL_A_TIME        = 3
-GameConfig.REVEAL_B_TIME        = 3
+GameConfig.REVEAL_A_TIME = 7   -- было 3, теперь 7 секунд
+GameConfig.REVEAL_B_TIME = 7   -- было 3, теперь 7 секунд
 GameConfig.DARK_CHOICE_TIME     = 10
 GameConfig.BATTLE_TIME          = 60
 GameConfig.CELEBRATION_TIME     = 5

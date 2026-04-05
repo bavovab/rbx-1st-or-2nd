@@ -1,37 +1,117 @@
 -- LocalScript: StarterPlayer/StarterPlayerScripts/ClientBootstrap.client.lua
--- Строит MainHUD, инициализирует все контроллеры, слушает ремоуты.
 
-local Players         = game:GetService("Players")
+local playMusic
+local stopMusic
+
+local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService    = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-local RunService      = game:GetService("RunService")
+local TweenService      = game:GetService("TweenService")
+local UserInputService  = game:GetService("UserInputService")
+local SoundService      = game:GetService("SoundService")
 
 local localPlayer = Players.LocalPlayer
 local playerGui   = localPlayer:WaitForChild("PlayerGui")
 
 -- ══════════════════════════════════════════════════════════
--- ОЖИДАЕМ РЕМОУТЫ
+-- РЕМОУТЫ
 -- ══════════════════════════════════════════════════════════
 local Remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
 assert(Remotes, "[ClientBootstrap] Remotes не найдены!")
 
-local RoundStateRemote  = Remotes:WaitForChild("RoundState")
-local HUDMessageRemote  = Remotes:WaitForChild("HUDMessage")
-local RoundResultRemote = Remotes:WaitForChild("RoundResult")
-local PlayCelebRemote   = Remotes:WaitForChild("PlayCelebration")
-local SyncDarkRemote    = Remotes:WaitForChild("SyncDarkness")
+local RoundStateRemote   = Remotes:WaitForChild("RoundState")
+local HUDMessageRemote   = Remotes:WaitForChild("HUDMessage")
+local RoundResultRemote  = Remotes:WaitForChild("RoundResult")
+local PlayCelebRemote    = Remotes:WaitForChild("PlayCelebration")
+local SyncDarkRemote     = Remotes:WaitForChild("SyncDarkness")
 local SubmitChoiceRemote = Remotes:WaitForChild("SubmitChoice")
-local CombatInputRemote = Remotes:WaitForChild("CombatInput")
+local CombatInputRemote  = Remotes:WaitForChild("CombatInput")
 
 -- ══════════════════════════════════════════════════════════
 -- КОНФИГИ
 -- ══════════════════════════════════════════════════════════
-local Enums        = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Enums"))
-local GameConfig   = require(ReplicatedStorage:WaitForChild("Config"):WaitForChild("GameConfig"))
-local CombatConfig = require(ReplicatedStorage:WaitForChild("Config"):WaitForChild("CombatConfig"))
+local Enums         = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Enums"))
+local GameConfig    = require(ReplicatedStorage:WaitForChild("Config"):WaitForChild("GameConfig"))
+local CombatConfig  = require(ReplicatedStorage:WaitForChild("Config"):WaitForChild("CombatConfig"))
+local ContentConfig = require(ReplicatedStorage:WaitForChild("Config"):WaitForChild("ContentConfig"))
 
 local PLACEHOLDER = "rbxassetid://112107392394775"
+
+-- ══════════════════════════════════════════════════════════
+-- МУЗЫКАЛЬНЫЙ МЕНЕДЖЕР
+-- ══════════════════════════════════════════════════════════
+local phaseMusic              = Instance.new("Sound")
+phaseMusic.Name               = "PhaseMusic"
+phaseMusic.Volume             = 0.6
+phaseMusic.Looped             = true
+phaseMusic.RollOffMaxDistance = 0
+phaseMusic.Parent             = SoundService
+
+local currentMusicId  = 0
+local musicStopThread = nil
+
+local function cancelStopThread()
+	if musicStopThread then
+		local t = musicStopThread
+		musicStopThread = nil
+		pcall(task.cancel, t)  -- pcall: если поток уже мёртв — просто игнорируем
+	end
+end
+
+playMusic = function(soundId, maxDuration)
+	cancelStopThread()
+
+	if not soundId or soundId == 0 then
+		phaseMusic:Stop()
+		currentMusicId = 0
+		return
+	end
+
+	local fullId = "rbxassetid://" .. tostring(soundId)
+	if phaseMusic.SoundId == fullId and phaseMusic.IsPlaying then
+		-- Тот же трек уже играет — просто перезапускаем авто-стоп
+		if maxDuration then
+			musicStopThread = task.delay(maxDuration, function()
+				musicStopThread = nil
+				stopMusic(1.5)
+			end)
+		end
+		return
+	end
+
+	phaseMusic:Stop()
+	phaseMusic.SoundId      = fullId
+	phaseMusic.TimePosition = 0
+	phaseMusic:Play()
+	currentMusicId = soundId
+	print(string.format("[ClientBootstrap] Music -> rbxassetid://%d (max %ds)",
+		soundId, maxDuration or 0))
+
+	if maxDuration and maxDuration > 0 then
+		musicStopThread = task.delay(maxDuration, function()
+			musicStopThread = nil  -- обнуляем ДО stopMusic чтобы cancelStopThread внутри не трогал мёртвый поток
+			stopMusic(1.5)
+		end)
+	end
+end
+
+stopMusic = function(fadeDuration)
+	cancelStopThread()
+
+	fadeDuration = fadeDuration or 0
+	if fadeDuration > 0 then
+		TweenService:Create(phaseMusic,
+			TweenInfo.new(fadeDuration, Enum.EasingStyle.Linear),
+			{ Volume = 0 }
+		):Play()
+		task.delay(fadeDuration, function()
+			phaseMusic:Stop()
+			phaseMusic.Volume = 0.6
+		end)
+	else
+		phaseMusic:Stop()
+	end
+	currentMusicId = 0
+end
 
 -- ══════════════════════════════════════════════════════════
 -- HELPERS
@@ -52,8 +132,6 @@ local function tw(inst, props, t, style, dir)
 		props):Play()
 end
 
--- Конвертирует Image из ContentConfig в строку для ImageLabel.
--- Если id = 0 или nil — ставит PLACEHOLDER.
 local function resolveImage(id)
 	if id and id ~= 0 then
 		return "rbxassetid://" .. tostring(id)
@@ -216,7 +294,7 @@ local rightBtn = make("TextButton", {
 }, rightCard)
 make("UICorner", { CornerRadius = UDim.new(0,8) }, rightBtn)
 
--- ── КНОПКА СКРЫТЬ / ПОКАЗАТЬ ──────────────────────────────
+-- ── TOGGLE BTN ────────────────────────────────────────────
 local toggleBtn = make("TextButton", {
 	Name = "ToggleChoiceBtn",
 	Size = UDim2.new(0,120,0,30),
@@ -227,9 +305,7 @@ local toggleBtn = make("TextButton", {
 	Font = Enum.Font.GothamSemibold,
 	Text = "👁 Скрыть",
 	TextScaled = true,
-	Visible = false,
-	ZIndex = 12,
-	BorderSizePixel = 0,
+	Visible = false, ZIndex = 12, BorderSizePixel = 0,
 }, mainHUD)
 make("UICorner", { CornerRadius = UDim.new(0,8) }, toggleBtn)
 make("UIStroke", {
@@ -245,10 +321,6 @@ local resultPanel = make("Frame", {
 }, mainHUD)
 make("UICorner", { CornerRadius = UDim.new(0,18) }, resultPanel)
 make("UIStroke", { Color = Color3.fromRGB(255,200,50), Thickness = 2, Transparency = 0.3 }, resultPanel)
-make("ImageLabel", {
-	Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1,
-	Image = PLACEHOLDER, ImageTransparency = 0.78, ZIndex = 9,
-}, resultPanel)
 local resultLabel = make("TextLabel", {
 	Name = "ResultLabel",
 	Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1,
@@ -290,8 +362,8 @@ local function setTimer(seconds)
 	end
 	timerContainer.Visible = true
 	local s = math.max(0, math.floor(seconds))
-	timerLabel.Text       = string.format("%d:%02d", math.floor(s/60), s%60)
-	timerLabel.TextColor3 = s <= 5
+	timerLabel.Text        = string.format("%d:%02d", math.floor(s/60), s%60)
+	timerLabel.TextColor3  = s <= 5
 		and Color3.fromRGB(255,80,50)
 		or  Color3.fromRGB(255,255,255)
 end
@@ -308,12 +380,12 @@ local function showBanner(text, color, duration)
 end
 
 local function showResult(isWinner, isDraw)
-	resultPanel.Visible              = true
+	resultPanel.Visible               = true
 	resultPanel.BackgroundTransparency = 1
-	resultLabel.Text = isDraw      and "🤝 Ничья!"
+	resultLabel.Text = isDraw     and "🤝 Ничья!"
 		or isWinner  and "🏆 ПОБЕДА!"
 		or               "💀 Поражение"
-	resultLabel.TextColor3 = isDraw     and Color3.fromRGB(200,200,200)
+	resultLabel.TextColor3 = isDraw    and Color3.fromRGB(200,200,200)
 		or isWinner         and Color3.fromRGB(255,220,50)
 		or                      Color3.fromRGB(220,80,60)
 	tw(resultPanel, { BackgroundTransparency = 0.12 }, 0.4)
@@ -337,9 +409,6 @@ end
 -- ══════════════════════════════════════════════════════════
 -- CHOICE PANEL HELPERS
 -- ══════════════════════════════════════════════════════════
-
--- Обновляет иконку карточки: принимает числовой Image ID из ContentConfig.
--- Если id = 0 или nil — показывает PLACEHOLDER.
 local function setCardImage(icon, imageId)
 	icon.Image = resolveImage(imageId)
 end
@@ -361,7 +430,7 @@ local function refreshBorders()
 end
 
 local function applyCardVisibility(visible, animate)
-	panelVisible = visible
+	panelVisible  = visible
 	local targetT = visible and 0 or 1
 	local dur     = animate and 0.25 or 0
 	for _, card in ipairs({leftCard, rightCard}) do
@@ -379,7 +448,7 @@ local function applyCardVisibility(visible, animate)
 				if animate then
 					tw(child, { TextTransparency = targetT, BackgroundTransparency = targetT }, dur)
 				else
-					child.TextTransparency      = targetT
+					child.TextTransparency       = targetT
 					child.BackgroundTransparency = targetT
 				end
 			elseif child:IsA("ImageLabel") then
@@ -401,14 +470,13 @@ local function showChoicePanel(data)
 	if data then
 		leftLabel.Text  = data.LeftText  or "Лево"
 		rightLabel.Text = data.RightText or "Право"
-		-- Обновляем иконки из данных сервера
 		setCardImage(leftIcon,  data.LeftImage)
 		setCardImage(rightIcon, data.RightImage)
 	end
-	leftCard.Visible   = true
-	rightCard.Visible  = true
+	leftCard.Visible    = true
+	rightCard.Visible   = true
 	choicePanel.Visible = true
-	currentSide = nil
+	currentSide  = nil
 	panelVisible = true
 	refreshBorders()
 end
@@ -475,8 +543,6 @@ end)
 -- COMBAT
 -- ══════════════════════════════════════════════════════════
 local lastAttack = 0
-local lastDash   = 0
-local lastBlock  = 0
 
 local function findClosestEnemy()
 	local char = localPlayer.Character
@@ -504,19 +570,16 @@ UserInputService.InputBegan:Connect(function(input, gp)
 		if now - lastAttack < CombatConfig.ATTACK_COOLDOWN then return end
 		lastAttack = now
 		local t = findClosestEnemy()
-		if t then CombatInputRemote:FireServer({ Action = Enums.CombatAction.Melee, TargetId = t.UserId }) end
-	elseif input.KeyCode == Enum.KeyCode.Q then
-		if now - lastDash < CombatConfig.DASH_COOLDOWN then return end
-		lastDash = now
-		CombatInputRemote:FireServer({ Action = Enums.CombatAction.Dash })
-	elseif input.KeyCode == Enum.KeyCode.E then
-		if now - lastBlock < CombatConfig.BLOCK_COOLDOWN then return end
-		lastBlock = now
-		CombatInputRemote:FireServer({ Action = Enums.CombatAction.Block })
+		if t then
+			CombatInputRemote:FireServer({
+				Action   = Enums.CombatAction.Melee,
+				TargetId = t.UserId,
+			})
+		end
 	end
 end)
 
-print("[ClientBootstrap] Combat input ready. Keys: F/Click=Attack, Q=Dash, E=Block")
+print("[ClientBootstrap] Combat input ready. Keys: F / Click = Attack")
 
 -- ══════════════════════════════════════════════════════════
 -- CELEBRATION
@@ -547,6 +610,8 @@ end
 -- ══════════════════════════════════════════════════════════
 -- REMOTE LISTENERS
 -- ══════════════════════════════════════════════════════════
+local MUSIC = ContentConfig.PHASE_MUSIC
+
 RoundStateRemote.OnClientEvent:Connect(function(data)
 	local phase = data.Phase
 
@@ -568,57 +633,66 @@ RoundStateRemote.OnClientEvent:Connect(function(data)
 		choiceEnabled = false
 		hideResult()
 		hideChoicePanel(false)
+		stopMusic(0.5)
 		setStatus("Ожидание...", Color3.fromRGB(180,180,200))
 		setTimer(nil)
 
 	elseif phase == Enums.Phase.TeleportToPreArena then
 		fadeTransition(0.6, 0.3)
 		task.delay(0.4, function() fadeTransition(0, 0.4) end)
+		stopMusic(0.3)
 		setStatus("Перемещение в арену...", Color3.fromRGB(100,200,255))
 		hideChoicePanel(false)
 
 	elseif phase == Enums.Phase.RevealChoiceA then
 		choiceEnabled = false
 		local d = data.Data or {}
-		-- Обновляем иконку левой карточки из данных сервера
 		setCardImage(leftIcon, d.Image)
 		if leftLabel and d.Text then leftLabel.Text = d.Text end
-		leftCard.Position            = UDim2.new(-0.6,0,0,0)
+		leftCard.Position               = UDim2.new(-0.6,0,0,0)
 		leftCard.BackgroundTransparency = 0.8
 		leftCard.Visible  = true
 		rightCard.Visible = false
 		choicePanel.Visible = true
 		toggleBtn.Visible   = false
 		tw(leftCard, { Position = UDim2.new(0,0,0,0), BackgroundTransparency = 0 }, 0.45, Enum.EasingStyle.Back)
+		-- Уникальная музыка варианта A, авто-стоп через REVEAL_A_TIME
+		playMusic(d.Music or 0, GameConfig.REVEAL_A_TIME)
 		setStatus("Вариант А: " .. (d.Text or "?"), Color3.fromRGB(150,180,255))
 
 	elseif phase == Enums.Phase.RevealChoiceB then
 		choiceEnabled = false
 		local d = data.Data or {}
-		-- Обновляем иконку правой карточки из данных сервера
 		setCardImage(rightIcon, d.Image)
 		if rightLabel and d.Text then rightLabel.Text = d.Text end
-		rightCard.Position            = UDim2.new(1.1,0,0,0)
+		rightCard.Position               = UDim2.new(1.1,0,0,0)
 		rightCard.BackgroundTransparency = 0.8
 		rightCard.Visible = true
 		tw(rightCard, { Position = UDim2.new(0.53,0,0,0), BackgroundTransparency = 0 }, 0.45, Enum.EasingStyle.Back)
+		-- Уникальная музыка варианта B, авто-стоп через REVEAL_B_TIME
+		playMusic(d.Music or 0, GameConfig.REVEAL_B_TIME)
 		setStatus("Вариант Б: " .. (d.Text or "?"), Color3.fromRGB(255,160,100))
 
 	elseif phase == Enums.Phase.DarkChoice then
 		local d = data.Data or {}
 		choiceEnabled = true
-		-- showChoicePanel уже обновит иконки через setCardImage внутри
 		showChoicePanel(d)
 		if d.Duration then setTimer(d.Duration) end
 		toggleBtn.Visible = true
 		toggleBtn.Text    = "👁 Скрыть"
 		toggleBtn.BackgroundTransparency = 1
 		tw(toggleBtn, { BackgroundTransparency = 0.25 }, 0.3)
+		-- Если задана отдельная музыка голосования — переключаем
+		-- иначе продолжает играть трек последнего показанного варианта
+		if MUSIC.DarkChoice and MUSIC.DarkChoice ~= 0 then
+			playMusic(MUSIC.DarkChoice, GameConfig.DARK_CHOICE_TIME)
+		end
 		setStatus("Выбери сторону!", Color3.fromRGB(255,240,80))
 
 	elseif phase == Enums.Phase.LockChoice then
 		choiceEnabled = false
 		setTimer(nil)
+		stopMusic(0.4)
 		setStatus("Выбор зафиксирован!", Color3.fromRGB(180,255,180))
 		tw(toggleBtn, { BackgroundTransparency = 1 }, 0.3)
 		task.delay(0.35, function() toggleBtn.Visible = false end)
@@ -637,11 +711,13 @@ RoundStateRemote.OnClientEvent:Connect(function(data)
 		local d = data.Data or {}
 		if d.Duration then setTimer(d.Duration) end
 		showBanner("⚔️ БИТВА!", Color3.fromRGB(255,60,60), 2)
-		setStatus("⚔️ Сражайся! [F=Атака Q=Рывок E=Блок]", Color3.fromRGB(255,80,80))
+		playMusic(MUSIC.Battle, GameConfig.BATTLE_TIME)
+		setStatus("⚔️ Сражайся! [F / Click = Атака]", Color3.fromRGB(255,80,80))
 
 	elseif phase == Enums.Phase.Victory then
 		battleActive = false
 		setTimer(nil)
+		stopMusic(0.5)
 		local d = data.Data or {}
 		local winnerName = d.Winner or "?"
 		if winnerName == "Draw" then
@@ -652,11 +728,13 @@ RoundStateRemote.OnClientEvent:Connect(function(data)
 		setStatus("Раунд завершён", Color3.fromRGB(220,200,100))
 
 	elseif phase == Enums.Phase.Celebration then
+		playMusic(MUSIC.Celebration, GameConfig.CELEBRATION_TIME)
 		setStatus("🎉 Празднование!", Color3.fromRGB(255,220,50))
 
 	elseif phase == Enums.Phase.ReturnToLobby then
 		fadeTransition(0.6, 0.35)
 		task.delay(0.5, function() fadeTransition(0, 0.5) end)
+		stopMusic(0.6)
 		setStatus("Возвращаемся в лобби...", Color3.fromRGB(150,150,255))
 		setTimer(nil)
 
@@ -664,6 +742,7 @@ RoundStateRemote.OnClientEvent:Connect(function(data)
 		battleActive  = false
 		choiceEnabled = false
 		hideChoicePanel(false)
+		stopMusic(0)
 		setStatus("Конец раунда.", Color3.fromRGB(150,150,170))
 	end
 end)
@@ -682,8 +761,6 @@ PlayCelebRemote.OnClientEvent:Connect(function(data)
 	if data then playCelebration(data.AnimId, data.SfxId) end
 end)
 
--- Затемнение отключено по запросу
-SyncDarkRemote.OnClientEvent:Connect(function(_)
-end)
+SyncDarkRemote.OnClientEvent:Connect(function(_) end)
 
 print("[ClientBootstrap] Готов,", localPlayer.Name)
